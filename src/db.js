@@ -47,6 +47,25 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS photos_report_idx ON photos (report_id, idx);
   `);
 
+  // One-off account setup from SET_USERS: JSON array of {email, password, name?, role?}.
+  // Creates missing accounts or resets the password of existing ones. Clear the variable afterwards,
+  // otherwise these passwords are reapplied on every restart.
+  if (process.env.SET_USERS) {
+    let list = [];
+    try { list = JSON.parse(process.env.SET_USERS); } catch { console.warn('SET_USERS is not valid JSON; ignored.'); }
+    for (const u of Array.isArray(list) ? list : []) {
+      const email = String(u.email || '').trim().toLowerCase();
+      if (!email || !u.password) continue;
+      const hash = await bcrypt.hash(String(u.password), 11);
+      const role = u.role === 'admin' ? 'admin' : 'engineer';
+      const name = u.name || email.split('@')[0].split('.').map(s => s[0].toUpperCase() + s.slice(1)).join(' ');
+      const upd = await pool.query('UPDATE users SET password_hash=$1, must_change_password=false, active=true WHERE lower(email)=$2 RETURNING id', [hash, email]);
+      if (upd.rowCount) { console.log(`SET_USERS: password reset for user ${upd.rows[0].id}`); continue; }
+      const ins = await pool.query('INSERT INTO users(name,email,role,password_hash,must_change_password) VALUES($1,$2,$3,$4,false) RETURNING id', [name, email, role, hash]);
+      console.log(`SET_USERS: created user ${ins.rows[0].id} (${role})`);
+    }
+  }
+
   // First admin, created once from environment variables.
   const { rows } = await pool.query('SELECT count(*)::int AS n FROM users');
   if (rows[0].n === 0) {

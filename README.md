@@ -20,4 +20,6 @@ Needs a Postgres database. Environment variables:
 | `OFFICE_EMAIL` | Comma-separated addresses copied on every report |
 | `REPLY_TO` | Optional reply-to address |
 
+| `SET_USERS` | One-off: JSON list of `{email, password, name, role}` to create accounts or reset passwords on start. Clear it afterwards. |
+
 `npm start` runs the server. Tables are created automatically on start.
