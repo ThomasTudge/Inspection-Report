@@ -1,0 +1,59 @@
+{
+  "version": "mock-1",
+  "ratings": [
+    {"id": "good", "label": "Good"},
+    {"id": "monitor", "label": "Monitor"},
+    {"id": "action", "label": "Action"},
+    {"id": "na", "label": "N/A"}
+  ],
+  "sections": [
+    {"id": "cold", "title": "Cold feed system", "items": [
+      "Feeder bins, grizzlies and liners",
+      "Feeder belts, rollers and scrapers",
+      "Collecting conveyor and belt tracking"
+    ]},
+    {"id": "drum", "title": "Drying drum and burner", "items": [
+      "Drum tyres, trunnions and thrust rollers",
+      "Flights and drum shell condition",
+      "Burner, flame shape and fuel train"
+    ]},
+    {"id": "dust", "title": "Dust collection", "items": [
+      "Bag filter bags and cages",
+      "Pulse cleaning system and differential pressure",
+      "Exhaust fan, ducting and stack"
+    ]},
+    {"id": "hot", "title": "Hot elevator and screen", "items": [
+      "Elevator chain, buckets and sprockets",
+      "Screen decks, meshes and springs",
+      "Hot bins and level indicators"
+    ]},
+    {"id": "mixer", "title": "Mixer and weighing", "items": [
+      "Mixer arms, tips and liners",
+      "Mixer discharge door and seals",
+      "Weigh hoppers and load cell calibration"
+    ]},
+    {"id": "bitumen", "title": "Bitumen system", "items": [
+      "Tanks, heating and temperature control",
+      "Pumps, valves and pipework lagging",
+      "Bitumen weighing and spray bar"
+    ]},
+    {"id": "filler", "title": "Filler system", "items": [
+      "Filler silos and screw conveyors",
+      "Filler weighing"
+    ]},
+    {"id": "silo", "title": "Storage silos and loadout", "items": [
+      "Skip, rails and hoist",
+      "Silo gates and insulation"
+    ]},
+    {"id": "controls", "title": "Control cabin and electrics", "items": [
+      "Control system and software",
+      "Motor control centre and cabling",
+      "Instrumentation and sensors"
+    ]},
+    {"id": "safety", "title": "Safety", "items": [
+      "Guarding and emergency stops",
+      "Access ladders, walkways and handrails",
+      "Signage and housekeeping"
+    ]}
+  ]
+}
