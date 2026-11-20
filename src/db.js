@@ -55,6 +55,11 @@ async function migrate() {
     try { list = JSON.parse(process.env.SET_USERS); } catch { console.warn('SET_USERS is not valid JSON; ignored.'); }
     for (const u of Array.isArray(list) ? list : []) {
       const email = String(u.email || '').trim().toLowerCase();
+      if (email && u.active === false) {
+        const off = await pool.query('UPDATE users SET active=false WHERE lower(email)=$1 RETURNING id', [email]);
+        if (off.rowCount) console.log(`SET_USERS: disabled user ${off.rows[0].id}`);
+        continue;
+      }
       if (!email || !u.password) continue;
       const hash = await bcrypt.hash(String(u.password), 11);
       const role = u.role === 'admin' ? 'admin' : 'engineer';
