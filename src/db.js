@@ -49,7 +49,8 @@ async function migrate() {
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS item TEXT;
   `);
 
-  // One-off account setup from SET_USERS: JSON array of {email, password, name?, role?}.
+  // One-off account setup from SET_USERS: JSON array of {email, password, name?, role?, mustChange?}.
+  // mustChange: true makes them choose their own password at next sign-in.
   // Creates missing accounts or resets the password of existing ones. Clear the variable afterwards,
   // otherwise these passwords are reapplied on every restart.
   if (process.env.SET_USERS) {
@@ -66,9 +67,10 @@ async function migrate() {
       const hash = await bcrypt.hash(String(u.password), 11);
       const role = u.role === 'admin' ? 'admin' : 'engineer';
       const name = u.name || email.split('@')[0].split('.').map(s => s[0].toUpperCase() + s.slice(1)).join(' ');
-      const upd = await pool.query('UPDATE users SET password_hash=$1, must_change_password=false, active=true WHERE lower(email)=$2 RETURNING id', [hash, email]);
+      const mustChange = u.mustChange === true;
+      const upd = await pool.query('UPDATE users SET password_hash=$1, must_change_password=$3, active=true WHERE lower(email)=$2 RETURNING id', [hash, email, mustChange]);
       if (upd.rowCount) { console.log(`SET_USERS: password reset for user ${upd.rows[0].id}`); continue; }
-      const ins = await pool.query('INSERT INTO users(name,email,role,password_hash,must_change_password) VALUES($1,$2,$3,$4,false) RETURNING id', [name, email, role, hash]);
+      const ins = await pool.query('INSERT INTO users(name,email,role,password_hash,must_change_password) VALUES($1,$2,$3,$4,$5) RETURNING id', [name, email, role, hash, mustChange]);
       console.log(`SET_USERS: created user ${ins.rows[0].id} (${role})`);
     }
   }
