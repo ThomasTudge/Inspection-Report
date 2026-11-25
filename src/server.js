@@ -7,6 +7,7 @@ const multer = require('multer');
 const { pool, migrate } = require('./db');
 const { buildPdf } = require('./pdf');
 const { sendReportEmail, mailConfigured } = require('./mail');
+const { runImports } = require('./import-once');
 
 const PORT = process.env.PORT || 3000;
 const PROD = process.env.NODE_ENV === 'production';
@@ -265,5 +266,5 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
-migrate().then(() => app.listen(PORT, () => console.log(`Listening on ${PORT}`)))
+migrate().then(runImports).then(() => app.listen(PORT, () => console.log(`Listening on ${PORT}`)))
   .catch(e => { console.error('Startup failed', e); process.exit(1); });
