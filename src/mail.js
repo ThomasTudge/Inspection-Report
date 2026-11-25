@@ -1,7 +1,7 @@
 // Sends report PDFs. Two ways to send, whichever is configured:
 //  - Resend: RESEND_API_KEY (+ MAIL_FROM on a domain verified in Resend)
 //  - SMTP, e.g. Microsoft 365: SMTP_HOST, SMTP_PORT (587), SMTP_USER, SMTP_PASS (+ MAIL_FROM, normally the same mailbox)
-const KEY = () => process.env.RESEND_API_KEY;
+const KEY = () => (process.env.RESEND_API_KEY || '').trim();
 const SMTP = () => process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS;
 const FROM = () => process.env.MAIL_FROM || process.env.RESEND_FROM || (SMTP() ? `Parker Plant Inspections <${process.env.SMTP_USER}>` : 'Parker Plant Inspections <onboarding@resend.dev>');
 const OFFICE = () => (process.env.OFFICE_EMAIL || '').split(',').map(s => s.trim()).filter(Boolean);
@@ -63,4 +63,16 @@ async function sendReportEmail(r, pdf, to) {
   return [...to, ...cc];
 }
 
-module.exports = { sendReportEmail, mailConfigured };
+// Startup line saying how email is set up (never prints the key itself).
+function describeMail() {
+  const k = process.env.RESEND_API_KEY;
+  if (k !== undefined) {
+    const t = k.trim();
+    if (!t) return 'Email: OFF. RESEND_API_KEY is set but empty (a ${{...}} reference to another Railway project comes through blank; paste the value itself).';
+    return `Email: Resend, key ${t.startsWith('re_') ? 'looks valid' : 'does NOT start with re_ (check it)'} (${t.length} chars)${t !== k ? ', had spaces around it (trimmed)' : ''}, sending as ${FROM()}`;
+  }
+  if (SMTP()) return `Email: SMTP via ${process.env.SMTP_HOST} as ${FROM()}`;
+  return 'Email: OFF. No RESEND_API_KEY or SMTP settings.';
+}
+
+module.exports = { sendReportEmail, mailConfigured, describeMail };

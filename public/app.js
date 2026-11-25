@@ -171,7 +171,6 @@ function renderReports(reports, all) {
     catch (e) { toast(navigator.onLine ? e.message : 'You need signal to delete a report.'); b.disabled = false; }
   });
   $$('[data-mail]', el).forEach(b => b.onclick = () => {
-    if (!mailOn) { toast('Email isn’t set up on the server yet. Ask your admin.', 5000); return; }
     const box = $('.mailbox', b.closest('.rep')); box.hidden = !box.hidden; if (box.hidden) return;
     box.innerHTML = `<label class="f" style="margin:8px 0 6px">Send the PDF to (separate several with commas)<input type="email" multiple value="${esc(b.dataset.to)}"></label>
       <button class="btn sm pri">Send</button> <span class="small muted"></span>`;

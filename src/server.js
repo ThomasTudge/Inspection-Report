@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const { pool, migrate } = require('./db');
 const { buildPdf } = require('./pdf');
-const { sendReportEmail, mailConfigured } = require('./mail');
+const { sendReportEmail, mailConfigured, describeMail } = require('./mail');
 const { runImports } = require('./import-once');
 const { parseManual, findPassword } = require('./manual');
 
@@ -411,5 +411,6 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
+console.log(describeMail());
 migrate().then(runImports).then(() => app.listen(PORT, () => console.log(`Listening on ${PORT}`)))
   .catch(e => { console.error('Startup failed', e); process.exit(1); });
