@@ -1,59 +1,153 @@
 {
-  "version": "mock-1",
+  "version": "parker-2026-11",
+  "title": "Asphalt Plant Inspection Report",
   "ratings": [
-    {"id": "good", "label": "Good"},
-    {"id": "monitor", "label": "Monitor"},
-    {"id": "action", "label": "Action"},
-    {"id": "na", "label": "N/A"}
+    {"id": "ok", "label": "OK", "short": "OK", "meaning": "No issues seen"},
+    {"id": "monitor", "label": "Monitor", "short": "Mon.", "meaning": "Early wear or minor defect, recheck next visit"},
+    {"id": "action", "label": "Action", "short": "Act.", "meaning": "Needs repair or replacement at the next planned shutdown"},
+    {"id": "urgent", "label": "Urgent", "short": "Urg.", "meaning": "Safety risk or likely failure: tell the customer today and fix before further production"},
+    {"id": "na", "label": "N/A", "short": "N/A", "meaning": "Not fitted. Equipment that is fitted but out of use must be identified separately, with its inspection status stated in the comments."}
+  ],
+  "safety": [
+    "Site induction completed",
+    "Permit to work / isolation in place for any close-up work",
+    "PPE worn and two-way radio carried",
+    "Hot, high and moving-plant hazards assessed"
   ],
   "sections": [
-    {"id": "cold", "title": "Cold feed system", "items": [
-      "Feeder bins, grizzlies and liners",
-      "Feeder belts, rollers and scrapers",
-      "Collecting conveyor and belt tracking"
+    {"id": "5.1", "title": "Cold Feed", "items": [
+      "Hoppers and grids: wear, damage, blockages",
+      "Feeder belts and skirts: wear, tracking, spillage",
+      "Bin vibrators and gates",
+      "Collecting and transfer conveyors: bearings, belts, idlers, drums, joints, scrapers",
+      "Canopy and sheeting",
+      "Guards, E-stops and pull wires",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "drum", "title": "Drying drum and burner", "items": [
-      "Drum tyres, trunnions and thrust rollers",
-      "Flights and drum shell condition",
-      "Burner, flame shape and fuel train"
+    {"id": "5.2", "title": "Dryer and Burner", "items": [
+      "Drum shell, seals and fencing / guards",
+      "Roller paths, support and thrust rollers",
+      "Drive: gear or chain, guards, lubrication",
+      "Dryer tracking",
+      "Condition of lifters",
+      "Burner: flame, nozzle, photocell, ignition leads",
+      "Fuel pipework, safety valves, hoses, pump and pressure gauges: leaks",
+      "Damper blades and linkage",
+      "Insulation, cladding and discharge chute",
+      "Pyrometer and pressure transducer",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "dust", "title": "Dust collection", "items": [
-      "Bag filter bags and cages",
-      "Pulse cleaning system and differential pressure",
-      "Exhaust fan, ducting and stack"
+    {"id": "5.3", "title": "Screening and Mixing Tower", "items": [
+      "Hot elevator: chain, buckets, casing, seals, unusual noise",
+      "Screen: mesh, mounts, V-belts, unusual noise",
+      "Hot bins: wear, gates, level probes",
+      "Aggregate, filler and bitumen weigh hoppers: seals, doors, cylinders",
+      "Load cells and mountings: damage, build-up, loose fixings",
+      "Mixer: shafts, arms, tips, liners, seals, leaks, unusual noise",
+      "Mixer motor, coupling, gearbox and discharge gate",
+      "Tower structure: platforms, stairs, handrails, guards, visibility",
+      "Dust or material leaks from casings and ducting",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "hot", "title": "Hot elevator and screen", "items": [
-      "Elevator chain, buckets and sprockets",
-      "Screen decks, meshes and springs",
-      "Hot bins and level indicators"
+    {"id": "5.4", "title": "Primary and Secondary Dust Collection", "items": [
+      "Primary collector (drop-out box or cyclone), screws, leaks",
+      "Filter casing, hoppers and ducting: holes, corrosion, leaks",
+      "Filter bags, free clean/pulse valves and air lines: visible damage, leaks",
+      "Secondary dust system, guards and screws",
+      "Exhaust fan and damper: noise, vibration, build-up",
+      "Pressure transducer",
+      "Temperature probes",
+      "Visible emissions from stack",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "mixer", "title": "Mixer and weighing", "items": [
-      "Mixer arms, tips and liners",
-      "Mixer discharge door and seals",
-      "Weigh hoppers and load cell calibration"
+    {"id": "5.5", "title": "Imported Filler Storage Silo", "items": [
+      "Silo structure, ladders and platforms",
+      "Level control and safety devices",
+      "Filling line, vent and filter",
+      "Weigh and trough screws, blower, aeration, pneumatics",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "bitumen", "title": "Bitumen system", "items": [
-      "Tanks, heating and temperature control",
-      "Pumps, valves and pipework lagging",
-      "Bitumen weighing and spray bar"
+    {"id": "5.6", "title": "Reclaimed Filler Storage Silo", "items": [
+      "Silo structure, ladders and platforms",
+      "Level control and safety devices",
+      "Reclaim elevator and screws",
+      "Weigh and trough screws, bellows, aeration, pneumatics",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "filler", "title": "Filler system", "items": [
-      "Filler silos and screw conveyors",
-      "Filler weighing"
+    {"id": "5.7", "title": "Reclaimed Filler Purge System", "items": [
+      "Purge valve, screw and pipework: wear, blockages, leaks",
+      "Guards, isolators and general condition",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "silo", "title": "Storage silos and loadout", "items": [
-      "Skip, rails and hoist",
-      "Silo gates and insulation"
+    {"id": "5.8", "title": "Dust Conditioner", "items": [
+      "Conditioner unit: casing, shaft seals, leaks",
+      "Feed screws and drive: guards, condition",
+      "Water or liquid supply and spray nozzles",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "controls", "title": "Control cabin and electrics", "items": [
-      "Control system and software",
-      "Motor control centre and cabling",
-      "Instrumentation and sensors"
+    {"id": "5.9", "title": "Additive Systems", "note": "Cover each additive system fitted (for example fibre or pellets, hydrated lime, warm mix, wet mix, liquid additive).", "items": [
+      "Hoppers or silos: structure, level control, leaks",
+      "Weigh screws, rotary valves and blowers",
+      "Pumps, nozzles, pipework and heating (liquid systems)",
+      "Guards, isolators and general condition",
+      {"t": "Other equipment / additional comments", "opt": true}
     ]},
-    {"id": "safety", "title": "Safety", "items": [
-      "Guarding and emergency stops",
-      "Access ladders, walkways and handrails",
-      "Signage and housekeeping"
+    {"id": "5.10", "title": "Bitumen Storage", "items": [
+      "Tank(s): insulation, cladding, access, leaks",
+      "Level gauging and safety devices (visible condition)",
+      "Heating system: heaters, thermal oil lines or controls (visible condition)",
+      "Pipework, valves and trace heating: leaks, damaged cladding",
+      "Pumps: seals and leaks",
+      "Spray bar / shower and splash guards",
+      "Bund and spill containment",
+      {"t": "Other equipment / additional comments", "opt": true}
+    ]},
+    {"id": "5.11", "title": "PMB Storage", "items": [
+      "Tank(s): insulation, cladding, access, leaks",
+      "Level gauging and safety devices (visible condition)",
+      "Heating system and pipework: leaks, damaged cladding",
+      "Pumps: seals and leaks",
+      "Bund and spill containment",
+      {"t": "Other equipment / additional comments", "opt": true}
+    ]},
+    {"id": "5.12", "title": "Mixed Material Storage", "items": [
+      "Storage silos: track, structure, gates, seals, cylinders",
+      "Silo heaters, insulation and cladding",
+      "Skip: doors, springs, wire rope, sheaves, track rails, wheels, safety stops",
+      "Winch, brake and gearbox: leaks, guards",
+      "Limit switches, slack rope sensor and Castell locks",
+      "Fencing under mixer and around winch",
+      "Load cells and weight display",
+      "Aviation light (if required)",
+      "Spillage",
+      {"t": "Other equipment / additional comments", "opt": true}
+    ]},
+    {"id": "5.13", "title": "Recycled Asphalt (RAP) Feed System", "items": [
+      "RAP hoppers and grids: wear, damage, blockages",
+      "Feeders, belts, skirts and vibrators, spillage",
+      "Conveyors and weigh conveyor: belts, idlers, scrapers",
+      "Vent fan, ductwork and entry chute: build-up, damage",
+      "Canopy, guards, E-stops and pull wires",
+      {"t": "Other equipment / additional comments", "opt": true}
+    ]},
+    {"id": "5.14", "title": "Control House and Motor Control Panels", "items": [
+      "Control house: structure, condition, air conditioning",
+      "Door interlocks, screens and alarms showing",
+      "Motor control panels: damage, dust, water ingress, labelling",
+      "Panel cooling fans and filters",
+      "Cables, trunking and glands: damaged or loose",
+      "Isolators, junction boxes and E-stops: damaged or obstructed",
+      {"t": "Other equipment / additional comments", "opt": true}
+    ]},
+    {"id": "5.15", "title": "Other Equipment and General Site", "items": [
+      "Compressor, air dryer, air lines and cylinders: leaks",
+      "Platforms, stairs, ladders and handrails (outside the areas above)",
+      "Steelwork: corrosion, cracks, loose bolts",
+      "Fencing, signage and fire extinguishers",
+      "Dust, spillage and trip hazards",
+      "Oil, fuel or bitumen leaks",
+      {"t": "Any other equipment not covered above (describe)", "opt": true},
+      {"t": "General comments", "opt": true}
     ]}
   ]
 }

@@ -1,6 +1,6 @@
 // App shell cache so the form opens with no signal. Reports themselves are queued in IndexedDB by app.js.
-const CACHE = 'ppi-shell-v1';
-const SHELL = ['/', '/index.html', '/app.js', '/styles.css', '/checklist.json', '/manifest.webmanifest', '/img/logo.png', '/img/icon-192.png'];
+const CACHE = 'ppi-shell-v2';
+const SHELL = ['/', '/index.html', '/app.js', '/model.js', '/styles.css', '/checklist.json', '/manifest.webmanifest', '/img/logo.png', '/img/icon-192.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));

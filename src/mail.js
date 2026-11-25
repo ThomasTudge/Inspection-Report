@@ -10,8 +10,8 @@ async function sendReportEmail(r, pdf) {
   const to = [r.engineer.email];
   if (d.customerEmail) to.push(d.customerEmail);
   const cc = OFFICE().filter(e => !to.includes(e));
-  const actions = Object.values(d.checklist || {}).filter(v => v.r === 'action').length;
-  const monitor = Object.values(d.checklist || {}).filter(v => v.r === 'monitor').length;
+  const n = r => Object.values(d.checklist || {}).filter(v => v.r === r).length;
+  const urgent = n('urgent'), actions = n('action'), monitor = n('monitor');
   const date = new Date(r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' });
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#14202b;max-width:560px">
     <div style="background:#006699;color:#fff;padding:18px 22px;border-bottom:4px solid #ffcc00">
@@ -19,11 +19,12 @@ async function sendReportEmail(r, pdf) {
       <div style="font-size:20px;font-weight:bold;margin-top:4px">${esc(r.ref)}: ${esc(d.siteName)}</div></div>
     <div style="padding:18px 22px;font-size:15px;line-height:1.5">
       <p>The inspection report for <b>${esc(d.customer)}</b>, ${esc(d.siteName)}, carried out by ${esc(r.engineer.name)} on ${date}, is attached as a PDF.</p>
+      ${urgent ? `<p style="margin:0 0 8px;color:#b3141f;font-weight:bold">${urgent} urgent item${urgent === 1 ? '' : 's'}: safety risk or likely failure.</p>` : ''}
       <p style="margin:0">${actions} item${actions === 1 ? '' : 's'} need action and ${monitor} should be monitored.</p>
       <p style="color:#5b6b78;font-size:13px;margin-top:22px">Sent automatically by the Parker Plant inspection app.</p>
     </div></div>`;
   const body = {
-    from: FROM(), to, subject: `Plant inspection report ${r.ref}: ${d.customer}, ${d.siteName}`, html,
+    from: FROM(), to, subject: `${urgent ? 'URGENT items: ' : ''}Asphalt plant inspection report ${r.ref}: ${d.customer}, ${d.siteName}`, html,
     attachments: [{ filename: `${r.ref}.pdf`, content: pdf.toString('base64') }],
   };
   if (cc.length) body.cc = cc;

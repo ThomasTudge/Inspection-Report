@@ -3,7 +3,7 @@
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const view = $('#view');
-view.addEventListener('click', e => { if (D && location.hash === '#new') onChecklistClick(e); });
+view.addEventListener('click', e => { if (D && location.hash === '#new') onFormClick(e); });
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtDT = d => new Date(d).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 const fmtT = d => new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
@@ -207,81 +207,222 @@ async function flushOutbox(manual) {
 setInterval(() => flushOutbox(), 60000);
 function sessionLost() { me = null; buildMenu(); toast('Please sign in again. Nothing has been lost.'); location.hash = '#login'; showLogin(); }
 
-/* ---------- inspection form ---------- */
-let D = null, saveT = null, urls = [];
+/* ---------- inspection form (Parker Asphalt Plant Inspection Report) ---------- */
+let D = null, saveT = null, urls = {}, issuesT = null;
+const MAX_PHOTOS = 80;
 const save = () => { clearTimeout(saveT); saveT = setTimeout(async () => {
-  try { await idb.set(draftKey(), D); const s = $('#saved'); if (s) s.textContent = `Draft saved on phone ${fmtT(new Date())}`; } catch (e) { toast('Couldn’t save draft: phone storage may be full.'); }
+  try { await idb.set(draftKey(), D); const s = $('#saved'); if (s) s.textContent = `Draft saved on phone ${fmtT(new Date())} · ${D.photos.length} photo${D.photos.length === 1 ? '' : 's'}`; }
+  catch (e) { toast('Couldn’t save draft: phone storage may be full.'); }
 }, 300); };
+const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 6e4).toISOString().slice(0, 10); };
+const isFinding = r => Model.FINDINGS.includes(r);
+const RLABEL = r => (CL.ratings.find(x => x.id === r) || {}).label || '';
+
+function newDraft() {
+  return { clientId: uuid(), visitStart: new Date().toISOString(), location: null, checklistVersion: CL.version,
+    inspectionDate: todayISO(), engineers: me.name, statusRunning: false, statusShutdown: false,
+    safety: CL.safety.map(() => false), checklist: {}, parts: [], photos: [] };
+}
+// Drafts started on the old sample checklist: keep the details and photos, drop the old ratings.
+function upgradeDraft(d) {
+  if (d.checklistVersion === CL.version) return d;
+  const n = newDraft();
+  ['clientId', 'visitStart', 'location', 'customer', 'siteName', 'serialNumber', 'plantModel', 'customerName', 'customerEmail', 'signature'].forEach(k => { if (d[k] != null) n[k] = d[k]; });
+  if (d.summary) n.topConcerns = d.summary;
+  if (d.recommendations) n.recFurther = d.recommendations;
+  n.photos = (d.photos || []).map(p => ({ ...p, sec: p.sec || '5.15', item: p.item || null }));
+  return n;
+}
 
 async function showForm() {
   if (!CL) CL = await fetch('/checklist.json').then(r => r.json());
   D = await idb.get(draftKey()).catch(() => null);
-  if (!D) { D = { clientId: uuid(), visitStart: new Date().toISOString(), location: null, checklist: {}, photos: [], checklistVersion: CL.version }; save(); }
-  urls.forEach(URL.revokeObjectURL); urls = [];
+  D = D ? upgradeDraft(D) : newDraft(); save();
+  Object.values(urls).flat().forEach(URL.revokeObjectURL); urls = {};
   const F = (k, label, type = 'text', extra = '') => `<label class="f">${label}<input type="${type}" data-f="${k}" value="${esc(D[k] || '')}" ${extra}></label>`;
-  view.innerHTML = `<h1 style="margin-bottom:4px">Plant inspection</h1><p class="muted small" style="margin:0 0 14px">Started ${fmtDT(D.visitStart)} · <span id="gps"></span></p>
-    <div class="card"><h2 style="margin-bottom:12px">Site and plant</h2>
-      <div class="grid2">${F('customer', 'Customer *', 'text', 'autocomplete="organization"')}${F('siteName', 'Site name *')}</div>
-      ${F('siteAddress', 'Site address')}
-      <div class="grid2">${F('plantModel', 'Plant model')}${F('serialNumber', 'Serial number')}</div>
-      ${F('plantHours', 'Plant hours', 'text', 'inputmode="numeric"')}</div>
-    <div class="sec-h"><h2>Checklist</h2><span class="prog" id="prog"></span></div>
-    <p class="small muted" style="margin:-4px 0 12px">Sample checklist, to be replaced with Parker's own.</p>
-    ${CL.sections.map(s => `<details class="card cl-sec" data-s="${s.id}"><summary>${esc(s.title)}<span class="c"></span></summary>
-      ${s.items.map((it, i) => { const k = `${s.id}-${i}`, v = D.checklist[k] || {}; return `<div class="item" data-k="${k}"><p>${esc(it)}</p>
-        <div class="seg">${CL.ratings.map(r => `<button type="button" data-r="${r.id}" aria-pressed="${v.r === r.id}">${r.label}</button>`).join('')}</div>
-        <input type="text" class="note" placeholder="Note (what did you find?)" value="${esc(v.note || '')}" ${v.note || v.r === 'monitor' || v.r === 'action' ? '' : 'hidden'}></div>`; }).join('')}
-      <button type="button" class="btn sm allgood" data-allgood="${s.id}">Mark the rest Good</button></details>`).join('')}
-    <div class="sec-h"><h2>Photos</h2><span class="prog" id="psize"></span></div>
-    <div id="photos"></div>
-    <div class="row" style="margin-bottom:6px"><label class="btn pri">📷 Take photo<input type="file" accept="image/*" capture="environment" id="cam"></label>
-      <label class="btn">Choose from phone<input type="file" accept="image/*" multiple id="gal"></label></div>
-    <p class="small muted" style="margin:0 0 6px">Photos are shrunk on the phone before upload so they send quickly.</p>
-    <div class="card" style="margin-top:18px"><h2 style="margin-bottom:12px">Summary</h2>
-      <label class="f">Engineer's summary<textarea data-f="summary" placeholder="Overall condition of the plant and what you did on site">${esc(D.summary || '')}</textarea></label>
-      <label class="f">Recommendations<textarea data-f="recommendations" placeholder="Parts, repairs or follow-up visits you recommend">${esc(D.recommendations || '')}</textarea></label></div>
-    <div class="card"><h2 style="margin-bottom:12px">Sign-off</h2>
-      <div class="grid2">${F('customerName', 'Customer representative')}${F('customerEmail', 'Email them a copy (optional)', 'email', 'autocomplete="off"')}</div>
-      <div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="small muted" style="font-weight:600">Customer signature</span><button type="button" class="btn sm" id="clr">Clear</button></div>
-      <canvas id="pad" aria-label="Signature pad"></canvas></div>
+  const T = (k, label, ph = '') => `<label class="f">${label}<textarea data-f="${k}" placeholder="${esc(ph)}">${esc(D[k] || '')}</textarea></label>`;
+  const CB = (attr, checked, label) => `<label class="cb"><input type="checkbox" ${attr} ${checked ? 'checked' : ''}><span>${label}</span></label>`;
+  const PICK = (k, opts) => `<div class="seg pick" data-pick="${k}" style="grid-template-columns:repeat(${opts.length},minmax(0,1fr))">${opts.map(([v, l]) => `<button type="button" data-v="${v}" data-r="${v}" aria-pressed="${D[k] === v}">${l}</button>`).join('')}</div>`;
+  const ADD = (sec, item, label, pri) => `<label class="btn sm ${pri ? 'pri' : ''}">${label}<input type="file" accept="image/*" ${item !== 'gal' ? 'capture="environment"' : 'multiple'} data-add="${sec}|${item === 'gal' ? '' : item || ''}"></label>`;
+
+  view.innerHTML = `<h1 style="margin-bottom:4px">Asphalt plant inspection</h1><p class="muted small" style="margin:0 0 14px">Started ${fmtDT(D.visitStart)} · <span id="gps"></span></p>
+
+    <div class="card"><h2>1. Report details</h2>
+      <div class="grid2">${F('customer', 'Customer *', 'text', 'autocomplete="organization"')}${F('siteName', 'Site *')}</div>
+      <div class="grid2">${F('plantModel', 'Plant make and model', 'text', 'placeholder="e.g. Roadstar 1500"')}${F('serialNumber', 'Plant serial no.')}</div>
+      <div class="grid2">${F('plantType', 'Plant type', 'text', 'list="ptypes"')}${F('projectNo', 'Project no.', 'text', 'inputmode="numeric"')}</div>
+      <datalist id="ptypes"><option value="Batch plant"><option value="Continuous / drum mix plant"><option value="Mobile batch plant"></datalist>
+      <div class="grid2">${F('inspectionDate', 'Inspection date', 'date')}${F('engineers', 'Parker engineer(s)')}</div>
+      ${F('siteContact', 'Customer contact on site')}
+      <div class="f"><span class="lbl">Plant status</span><div class="row">${CB('data-cb="statusRunning"', D.statusRunning, 'Running')}${CB('data-cb="statusShutdown"', D.statusShutdown, 'Shut down')}</div>
+        <input type="text" data-f="statusNote" placeholder="Note, e.g. both inspections carried out" value="${esc(D.statusNote || '')}" style="margin-top:8px"></div>
+      <div class="grid2">${F('hoursSince', 'Hours or tonnes since last inspection')}${F('previousRef', 'Previous report ref (and open items)')}</div>
+      <div class="f"><span class="lbl">Cover photo of the plant</span><div data-ph="cover" data-sec="cover"></div><div class="row">${ADD('cover', '', '📷 Take cover photo', false)}${ADD('cover', 'gal', 'Choose from phone')}</div></div>
+    </div>
+
+    <div class="card"><h2>2. Safety</h2>
+      <p class="small muted" style="margin:0 0 10px">This is a visual inspection. Do not remove guards, open panels or enter plant unless isolated under the site permit system.</p>
+      ${CL.safety.map((t, i) => CB(`data-safety="${i}"`, D.safety[i], esc(t))).join('')}
+    </div>
+
+    <div class="sec-h"><h2>5. Inspection checklist</h2><span class="prog" id="prog"></span></div>
+    <details class="key small"><summary>Condition key</summary>${CL.ratings.map(r => `<p><b class="k-${r.id}">${r.label}</b> ${esc(r.meaning)}</p>`).join('')}</details>
+    ${CL.sections.map(s => `<details class="card cl-sec" data-s="${s.id}"><summary><span class="sref">${s.id}</span>${esc(s.title)}<span class="c"></span></summary>
+      ${s.note ? `<p class="small muted" style="margin:0;padding:0 16px 10px">${esc(s.note)}</p>` : ''}
+      ${Model.items(s).map(it => itemHtml(s, it)).join('')}
+      <div class="sec-ph"><b class="small">Photos for ${esc(s.title)}</b><div data-ph="sec:${s.id}" data-sec="${s.id}"></div>
+        <div class="row">${ADD(s.id, '', '📷 Take photo', true)}${ADD(s.id, 'gal', 'Choose from phone')}</div></div>
+      <div class="row" style="padding:0 16px 14px"><button type="button" class="btn sm" data-fill="${s.id}|ok">Mark the rest OK</button><button type="button" class="btn sm" data-fill="${s.id}|na">Mark the rest N/A (not fitted)</button></div>
+    </details>`).join('')}
+
+    <div class="card"><h2>6. Issues and recommended actions</h2><p class="small muted" style="margin:0 0 8px">Filled in automatically from every Monitor, Action or Urgent line. Tap one to go to it.</p><div id="issues"></div></div>
+
+    <div class="card"><h2>4. Summary</h2>
+      <div class="f"><span class="lbl">Overall plant condition</span>${PICK('overall', [['ok', 'OK'], ['monitor', 'Monitor'], ['action', 'Action'], ['urgent', 'Urgent']])}</div>
+      <div class="f"><span class="lbl">Safe to keep operating?</span>${PICK('safe', [['yes', 'Yes'], ['conditions', 'Yes with conditions'], ['no', 'No']])}</div>
+      ${T('conditions', 'Conditions / restrictions')}
+      <div class="f"><span class="lbl">Number of issues raised</span><div id="icount" class="small"></div></div>
+      ${T('topConcerns', 'Top three concerns', '1.\n2.\n3.')}
+    </div>
+
+    <div class="card"><h2>7. Parts required</h2><p class="small muted" style="margin:0 0 10px">Sent to Parker Plant Parts and Aftersales for quotation, quoting the plant serial number and the issue refs.</p>
+      <div id="parts"></div><button type="button" class="btn sm" id="addPart">+ Add part</button></div>
+
+    <div class="card"><h2>8. Recommendations</h2>
+      ${T('recBefore', 'Do before next production')}${T('recShutdown', 'Plan for next shutdown')}${T('recSpares', 'Spares to hold on site')}
+      ${T('recFurther', 'Further checks or specialist visits needed', 'e.g. calibration, electrical test')}${F('nextInspection', 'Date of next inspection', 'text', 'placeholder="e.g. February 2027"')}</div>
+
+    <div class="card"><h2>9. Sign-off</h2>
+      <h3>Parker engineer</h3><p class="small muted" style="margin:2px 0 8px">${esc(me.name)}</p>
+      <div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="lbl">Engineer signature</span><button type="button" class="btn sm" data-clr="engineerSignature">Clear</button></div>
+      <canvas class="pad" data-pad="engineerSignature" aria-label="Engineer signature pad"></canvas>
+      <h3 style="margin-top:18px">Customer representative</h3>
+      <div class="grid2" style="margin-top:8px">${F('customerName', 'Name')}${F('customerEmail', 'Email them a copy (optional)', 'email', 'autocomplete="off"')}</div>
+      <div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="lbl">Customer signature</span><button type="button" class="btn sm" data-clr="signature">Clear</button></div>
+      <canvas class="pad" data-pad="signature" aria-label="Customer signature pad"></canvas></div>
     <p class="err" id="ferr"></p>
     <div class="sticky"><div class="in"><span class="saved" id="saved">Draft saves on this phone as you go</span><button class="btn pri" id="submit" style="min-width:150px">Submit report</button></div></div>`;
 
-  $$('[data-f]').forEach(el => el.addEventListener('input', () => { D[el.dataset.f] = el.value; save(); }));
-  $$('.item .note').forEach(n => n.addEventListener('input', () => { const k = n.closest('.item').dataset.k; D.checklist[k] = { ...(D.checklist[k] || {}), note: n.value }; save(); }));
-  updateProgress(); renderPhotos(); setupPad(); gps(false);
-  $('#cam').onchange = e => addFiles(e.target); $('#gal').onchange = e => addFiles(e.target);
+  $$('[data-ph]').forEach(renderPh);
+  updateProgress(); renderIssues(); renderParts(); $$('[data-pad]').forEach(setupPad); gps(false);
+  $('#addPart').onclick = () => { D.parts.push({ id: uuid(), issue: '', desc: '', partNo: '', qty: '', needed: '', quote: false }); save(); renderParts(); $$('#parts [data-p$="|desc"]').pop()?.focus(); };
   $('#submit').onclick = submit;
-  const firstOpen = CL.sections.find(s => s.items.some((_, i) => !D.checklist[`${s.id}-${i}`]?.r));
+  const firstOpen = CL.sections.find(s => Model.items(s).some(it => !it.opt && !D.checklist[it.ref]?.r));
   if (firstOpen) $(`details[data-s="${firstOpen.id}"]`).open = true;
 }
-function onChecklistClick(e) {
-  const b = e.target.closest('.seg button');
+
+function itemHtml(s, it) {
+  const v = D.checklist[it.ref] || {}, f = isFinding(v.r);
+  return `<div class="item" data-k="${it.ref}" data-s="${s.id}"><p><span class="ref">${it.ref}</span>${esc(it.t)}${it.opt ? ' <span class="muted small">(optional)</span>' : ''}</p>
+    <div class="seg">${CL.ratings.map(r => `<button type="button" data-r="${r.id}" aria-pressed="${v.r === r.id}">${r.label}</button>`).join('')}</div>
+    <input type="text" class="note" data-n="note" placeholder="${f ? 'What was seen *' : 'Comment'}" value="${esc(v.note || '')}" ${v.note || f || it.opt ? '' : 'hidden'}>
+    <input type="text" class="note" data-n="action" placeholder="Recommended action" value="${esc(v.action || '')}" ${f ? '' : 'hidden'}>
+    <div data-ph="item:${it.ref}" data-sec="${s.id}"></div>
+    <div class="tools">${v.note || f || it.opt ? '' : '<button type="button" class="lnk" data-addnote>+ Comment</button>'}
+      <label class="lnk">📷 Photo of this item<input type="file" accept="image/*" capture="environment" data-add="${s.id}|${it.ref}"></label></div></div>`;
+}
+
+function onFormClick(e) {
+  const b = e.target.closest('.item .seg button');
   if (b) {
     const item = b.closest('.item'), k = item.dataset.k, r = b.dataset.r;
     D.checklist[k] = { ...(D.checklist[k] || {}), r };
-    $$('button', item).forEach(x => x.setAttribute('aria-pressed', x === b));
-    const note = $('.note', item);
-    if (r === 'monitor' || r === 'action') { note.hidden = false; if (!note.value) note.focus(); }
-    save(); updateProgress(); return;
+    $$('.seg button', item).forEach(x => x.setAttribute('aria-pressed', x === b));
+    const [note, act] = $$('.note', item), f = isFinding(r);
+    note.placeholder = f ? 'What was seen *' : 'Comment';
+    act.hidden = !f;
+    if (f) { note.hidden = false; $('[data-addnote]', item)?.remove(); if (!note.value) note.focus(); }
+    save(); updateProgress(); renderIssues(); return;
   }
-  const ag = e.target.closest('[data-allgood]');
-  if (ag) {
-    const s = CL.sections.find(x => x.id === ag.dataset.allgood);
-    s.items.forEach((_, i) => { const k = `${s.id}-${i}`; if (!D.checklist[k]?.r) { D.checklist[k] = { ...(D.checklist[k] || {}), r: 'good' }; $(`.item[data-k="${k}"] [data-r=good]`).setAttribute('aria-pressed', true); } });
-    save(); updateProgress();
+  const pk = e.target.closest('[data-pick] button');
+  if (pk) {
+    const g = pk.closest('[data-pick]'), k = g.dataset.pick;
+    D[k] = D[k] === pk.dataset.v ? null : pk.dataset.v;
+    $$('button', g).forEach(x => x.setAttribute('aria-pressed', D[k] === x.dataset.v));
+    save(); return;
   }
+  if (e.target.closest('[data-addnote]')) {
+    const item = e.target.closest('.item'); const n = $('.note', item); n.hidden = false; n.focus(); e.target.closest('[data-addnote]').remove(); return;
+  }
+  const fill = e.target.closest('[data-fill]');
+  if (fill) {
+    const [sid, r] = fill.dataset.fill.split('|'), s = CL.sections.find(x => x.id === sid);
+    Model.items(s).forEach(it => {
+      if (D.checklist[it.ref]?.r || (it.opt && r === 'ok')) return;
+      D.checklist[it.ref] = { ...(D.checklist[it.ref] || {}), r };
+      $$(`.item[data-k="${it.ref}"] .seg button`).forEach(x => x.setAttribute('aria-pressed', x.dataset.r === r));
+    });
+    save(); updateProgress(); renderIssues(); return;
+  }
+  const go = e.target.closest('[data-goto]');
+  if (go) {
+    const el = $(`.item[data-k="${go.dataset.goto}"]`); el.closest('details').open = true;
+    el.scrollIntoView({ block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1500); return;
+  }
+  const rm = e.target.closest('[data-rmpart]');
+  if (rm) { D.parts = D.parts.filter(p => p.id !== rm.dataset.rmpart); save(); renderParts(); return; }
+  const clr = e.target.closest('[data-clr]');
+  if (clr) { D[clr.dataset.clr] = null; save(); setupPad($(`[data-pad="${clr.dataset.clr}"]`)); }
 }
+function onFormInput(e) {
+  const t = e.target;
+  if (t.dataset.f) { D[t.dataset.f] = t.value; save(); return; }
+  if (t.dataset.n) {
+    const k = t.closest('.item').dataset.k;
+    D.checklist[k] = { ...(D.checklist[k] || {}), [t.dataset.n]: t.value }; save();
+    clearTimeout(issuesT); issuesT = setTimeout(renderIssues, 400); return;
+  }
+  if (t.dataset.cb) { D[t.dataset.cb] = t.checked; save(); return; }
+  if (t.dataset.safety != null) { D.safety[+t.dataset.safety] = t.checked; save(); return; }
+  if (t.dataset.p) {
+    const [id, field] = t.dataset.p.split('|'), p = D.parts.find(x => x.id === id);
+    if (p) { p[field] = t.type === 'checkbox' ? t.checked : t.value; save(); }
+    return;
+  }
+  if (t.dataset.cap) { const p = D.photos.find(x => x.id === t.dataset.cap); if (p) { p.caption = t.value; save(); } return; }
+  if (t.dataset.add != null && e.type === 'change') { const [sec, item] = t.dataset.add.split('|'); addFiles(t, sec, item || null); }
+}
+view.addEventListener('input', e => { if (D && location.hash === '#new') onFormInput(e); });
+view.addEventListener('change', e => { if (D && location.hash === '#new' && (e.target.type === 'file' || e.target.type === 'checkbox' || e.target.tagName === 'SELECT')) onFormInput(e); });
+
 function updateProgress() {
   let done = 0, total = 0;
   CL.sections.forEach(s => {
-    const n = s.items.filter((_, i) => D.checklist[`${s.id}-${i}`]?.r).length;
-    const acts = s.items.filter((_, i) => D.checklist[`${s.id}-${i}`]?.r === 'action').length;
-    done += n; total += s.items.length;
+    const its = Model.items(s).filter(it => !it.opt);
+    const n = its.filter(it => D.checklist[it.ref]?.r).length;
+    const f = Model.items(s).map(it => D.checklist[it.ref]?.r).filter(isFinding);
+    const urg = f.filter(r => r === 'urgent').length, act = f.filter(r => r === 'action').length, mon = f.filter(r => r === 'monitor').length;
+    const ph = D.photos.filter(p => p.sec === s.id).length;
+    done += n; total += its.length;
     const c = $(`details[data-s="${s.id}"] .c`);
-    c.textContent = `${n}/${s.items.length}${acts ? ` · ${acts} action` : ''}`; c.classList.toggle('done', n === s.items.length);
+    c.innerHTML = `${n}/${its.length}${urg ? ` <i class="k-urgent">${urg} urg</i>` : ''}${act ? ` <i class="k-action">${act} act</i>` : ''}${mon ? ` <i class="k-monitor">${mon} mon</i>` : ''}${ph ? ` · 📷${ph}` : ''}`;
+    c.classList.toggle('done', n === its.length);
   });
   $('#prog').textContent = `${done} of ${total} checked`;
+}
+function renderIssues() {
+  const el = $('#issues'); if (!el) return;
+  const list = Model.issues(CL, D.checklist), refs = Model.photoRefs(D.photos);
+  const c = { urgent: 0, action: 0, monitor: 0 }; list.forEach(i => c[i.r]++);
+  $('#icount').innerHTML = `<span class="k-urgent">Urgent: ${c.urgent}</span> &nbsp; <span class="k-action">Action: ${c.action}</span> &nbsp; <span class="k-monitor">Monitor: ${c.monitor}</span>`;
+  el.innerHTML = list.length ? `<ol class="issues">${list.map(i => {
+    const pr = D.photos.map((p, j) => p.item === i.ref ? refs[j] : null).filter(Boolean);
+    return `<li data-goto="${i.ref}"><span class="n">${i.n}</span><div><b>${esc(i.area)}</b> · ${i.ref} ${esc(i.item)} <span class="chip k-${i.r}">${RLABEL(i.r)}</span>
+      <div class="small">${i.note ? esc(i.note) : '<span class="warnTxt">No comment yet</span>'}</div>
+      ${i.action ? `<div class="small"><b>Action:</b> ${esc(i.action)}</div>` : ''}
+      <div class="small muted">${pr.length ? 'Photos ' + pr.join(', ') : 'No photo'}</div></div></li>`; }).join('')}</ol>` : '<p class="muted small" style="margin:0">No issues raised yet.</p>';
+  // keep the issue picker in Parts in step
+  $$('#parts select').forEach(sel => { const v = sel.value; sel.innerHTML = issueOpts(v); });
+}
+const issueOpts = v => `<option value="">Not linked to an issue</option>${Model.issues(CL, D.checklist).map(i => `<option value="${i.ref}" ${i.ref === v ? 'selected' : ''}>${i.n}. ${esc(i.area)}: ${esc(i.item.split(':')[0])}</option>`).join('')}${v && !Model.issues(CL, D.checklist).some(i => i.ref === v) ? `<option value="${esc(v)}" selected>${esc(v)} (no longer an issue)</option>` : ''}`;
+function renderParts() {
+  const el = $('#parts');
+  el.innerHTML = D.parts.map((p, i) => `<div class="part"><div class="row" style="justify-content:space-between"><b class="small">Part ${i + 1}</b><button type="button" class="lnk warnTxt" data-rmpart="${p.id}">Remove</button></div>
+    <label class="f">Issue ref<select data-p="${p.id}|issue">${issueOpts(p.issue)}</select></label>
+    <label class="f">Part description<input type="text" data-p="${p.id}|desc" value="${esc(p.desc)}"></label>
+    <div class="grid2"><label class="f">Part no.<input type="text" data-p="${p.id}|partNo" value="${esc(p.partNo)}"></label><label class="f">Qty<input type="text" inputmode="numeric" data-p="${p.id}|qty" value="${esc(p.qty)}"></label></div>
+    <div class="f"><span class="lbl">Needed</span><div class="row">${[['now', 'Now'], ['shutdown', 'Next shutdown'], ['spare', 'Spare']].map(([v, l]) => `<label class="cb"><input type="radio" name="need-${p.id}" data-p="${p.id}|needed" value="${v}" ${p.needed === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
+    <label class="cb"><input type="checkbox" data-p="${p.id}|quote" ${p.quote ? 'checked' : ''}><span>Quote needed</span></label></div>`).join('') || '<p class="muted small" style="margin:0 0 10px">No parts added.</p>';
 }
 
 /* GPS */
@@ -302,7 +443,7 @@ function gps(manual) {
   { enableHighAccuracy: true, timeout: 20000, maximumAge: 60000 });
 }
 
-/* Photos */
+/* Photos: each one belongs to the cover, a checklist area, or one line in an area */
 async function compress(file) {
   const bmp = await (window.createImageBitmap ? createImageBitmap(file, { imageOrientation: 'from-image' }).catch(() => null) : null) || await new Promise((res, rej) => {
     const im = new Image(), u = URL.createObjectURL(file); im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = rej; im.src = u; });
@@ -311,46 +452,47 @@ async function compress(file) {
   c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
   return new Promise(res => c.toBlob(res, 'image/jpeg', 0.78));
 }
-async function addFiles(input) {
+async function addFiles(input, sec, item) {
   const files = [...input.files]; input.value = '';
-  if (D.photos.length + files.length > 40) { toast('Up to 40 photos per report.'); return; }
-  for (const f of files) {
+  if (!files.length) return;
+  if (D.photos.length + files.length > MAX_PHOTOS) { toast(`Up to ${MAX_PHOTOS} photos per report.`); return; }
+  if (sec === 'cover') D.photos = D.photos.filter(p => p.sec !== 'cover');
+  for (const f of (sec === 'cover' ? files.slice(0, 1) : files)) {
     try {
       const blob = await compress(f);
-      D.photos.push({ id: uuid(), blob, caption: '', takenAt: new Date(f.lastModified && Date.now() - f.lastModified < 864e5 * 3 ? f.lastModified : Date.now()).toISOString(), orig: f.size });
+      D.photos.push({ id: uuid(), blob, caption: '', sec, item, takenAt: new Date(f.lastModified && Date.now() - f.lastModified < 864e5 * 3 ? f.lastModified : Date.now()).toISOString(), orig: f.size });
     } catch { toast('That photo couldn’t be read.'); }
   }
-  save(); renderPhotos();
-  const last = $$('#photos .ph input').pop(); if (last && files.length === 1) last.focus();
+  save(); $$(`[data-ph][data-sec="${sec}"]`).forEach(renderPh); updateProgress(); renderIssues();
+  const last = $$(`[data-ph][data-sec="${sec}"] [data-cap]`).find(x => !x.value && x.closest(item ? `[data-ph="item:${item}"]` : `[data-ph="${sec === 'cover' ? 'cover' : 'sec:' + sec}"]`));
+  if (last && files.length === 1 && sec !== 'cover') last.focus({ preventScroll: true });
 }
-function renderPhotos() {
-  urls.forEach(URL.revokeObjectURL); urls = [];
-  const el = $('#photos');
-  if (!D.photos.length) { el.innerHTML = '<div class="empty">No photos yet. At least one is needed.</div>'; $('#psize').textContent = ''; return; }
-  el.innerHTML = `<div class="photos">${D.photos.map((p, i) => { const u = URL.createObjectURL(p.blob); urls.push(u);
-    return `<div class="ph" data-i="${i}"><div class="im"><img src="${u}" alt="Photo ${i + 1}"><button class="x" type="button" aria-label="Remove photo ${i + 1}">×</button></div>
-      <input type="text" placeholder="Caption, e.g. mixer tips" value="${esc(p.caption)}"></div>`; }).join('')}</div>`;
-  $$('.ph', el).forEach(ph => {
-    const i = +ph.dataset.i;
-    $('input', ph).oninput = e => { D.photos[i].caption = e.target.value; save(); };
-    $('.x', ph).onclick = e => { const b = e.currentTarget; if (b.dataset.sure) { D.photos.splice(i, 1); save(); renderPhotos(); } else { b.dataset.sure = 1; b.textContent = '✓'; b.style.background = 'var(--action)'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = '×'; b.style.background = ''; } }, 3000); } };
+function renderPh(el) {
+  const key = el.dataset.ph;
+  (urls[key] || []).forEach(URL.revokeObjectURL); urls[key] = [];
+  const refs = Model.photoRefs(D.photos);
+  const mine = D.photos.map((p, i) => ({ p, ref: refs[i] })).filter(({ p }) =>
+    key === 'cover' ? p.sec === 'cover' : key.startsWith('item:') ? p.item === key.slice(5) : p.sec === key.slice(4) && !p.item);
+  if (!mine.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="photos ${key.startsWith('item:') ? 'sm' : ''}">${mine.map(({ p, ref }) => { const u = URL.createObjectURL(p.blob); urls[key].push(u);
+    return `<div class="ph"><div class="im"><img src="${u}" alt="Photo ${ref}"><span class="pref">${ref}</span><button class="x" type="button" data-rm="${p.id}" aria-label="Remove photo ${ref}">×</button></div>
+      ${key === 'cover' ? '' : `<input type="text" data-cap="${p.id}" placeholder="Caption" value="${esc(p.caption)}">`}</div>`; }).join('')}</div>`;
+  $$('[data-rm]', el).forEach(b => b.onclick = () => {
+    if (b.dataset.sure) { const p = D.photos.find(x => x.id === b.dataset.rm), sec = p.sec; D.photos = D.photos.filter(x => x !== p); save(); $$(`[data-ph][data-sec="${sec}"]`).forEach(renderPh); updateProgress(); renderIssues(); }
+    else { b.dataset.sure = 1; b.textContent = '✓'; b.style.background = 'var(--urg)'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = '×'; b.style.background = ''; } }, 3000); }
   });
-  const o = D.photos.reduce((a, p) => a + (p.orig || 0), 0), n = D.photos.reduce((a, p) => a + p.blob.size, 0);
-  $('#psize').textContent = `${D.photos.length} · ${kb(n)}${o ? ` (from ${kb(o)})` : ''}`;
 }
 
-/* Signature */
-function setupPad() {
-  const pad = $('#pad'), ctx = pad.getContext('2d'); let drawing = false, dirty = false;
-  const size = () => { const r = pad.getBoundingClientRect(); pad.width = r.width * 2; pad.height = r.height * 2; ctx.setTransform(2, 0, 0, 2, 0, 0);
-    ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#14202b';
-    if (D.signature) { const im = new Image(); im.onload = () => ctx.drawImage(im, 0, 0, r.width, r.height); im.src = D.signature; } };
-  size();
-  const pos = e => { const r = pad.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+/* Signatures */
+function setupPad(pad) {
+  const key = pad.dataset.pad, ctx = pad.getContext('2d'); let drawing = false, dirty = false;
+  const r = pad.getBoundingClientRect(); pad.width = r.width * 2; pad.height = r.height * 2; ctx.setTransform(2, 0, 0, 2, 0, 0);
+  ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#14202b';
+  if (D[key]) { const im = new Image(); im.onload = () => ctx.drawImage(im, 0, 0, r.width, r.height); im.src = D[key]; }
+  const pos = e => { const b = pad.getBoundingClientRect(); return [e.clientX - b.left, e.clientY - b.top]; };
   pad.onpointerdown = e => { drawing = true; pad.setPointerCapture(e.pointerId); ctx.beginPath(); ctx.moveTo(...pos(e)); };
   pad.onpointermove = e => { if (!drawing) return; ctx.lineTo(...pos(e)); ctx.stroke(); dirty = true; };
-  pad.onpointerup = pad.onpointercancel = () => { if (drawing && dirty) { D.signature = pad.toDataURL('image/png'); save(); } drawing = false; };
-  $('#clr').onclick = () => { D.signature = null; save(); size(); };
+  pad.onpointerup = pad.onpointercancel = () => { if (drawing && dirty) { D[key] = pad.toDataURL('image/png'); save(); } drawing = false; };
 }
 
 /* Submit */
@@ -358,16 +500,27 @@ async function submit() {
   const err = $('#ferr'); err.textContent = '';
   const miss = [];
   if (!D.customer?.trim()) miss.push('the customer');
-  if (!D.siteName?.trim()) miss.push('the site name');
+  if (!D.siteName?.trim()) miss.push('the site');
   if (!D.photos.length) miss.push('at least one photo');
   if (miss.length) { err.textContent = 'Please add ' + miss.join(', ') + '.'; err.scrollIntoView({ block: 'center' }); return; }
-  const total = CL.sections.reduce((a, s) => a + s.items.length, 0), done = Object.values(D.checklist).filter(v => v.r).length;
+  const c = Model.counts(CL, D.checklist), iss = Model.issues(CL, D.checklist);
+  const warn = [];
+  if (c.done < c.total) warn.push(`${c.total - c.done} checklist line${c.total - c.done > 1 ? 's are' : ' is'} not ticked`);
+  const noNote = iss.filter(i => !i.note.trim()).length;
+  if (noNote) warn.push(`${noNote} Monitor/Action/Urgent line${noNote > 1 ? 's have' : ' has'} no comment`);
+  if (!D.overall) warn.push('overall plant condition is not set');
+  if (!D.safe) warn.push('“safe to keep operating” is not answered');
+  if (D.safety.some(x => !x)) warn.push('not every safety check is ticked');
+  if (!D.engineerSignature) warn.push('the engineer hasn’t signed');
   const btn = $('#submit');
-  if (done < total && !btn.dataset.sure) { btn.dataset.sure = 1; btn.textContent = 'Submit anyway'; err.textContent = `${total - done} checklist item${total - done > 1 ? 's are' : ' is'} not checked. Tap again to submit anyway.`; return; }
+  if (warn.length && !btn.dataset.sure) {
+    btn.dataset.sure = 1; btn.textContent = 'Submit anyway';
+    err.textContent = warn.join('; ').replace(/^./, m => m.toUpperCase()) + '. Tap again to submit anyway.'; err.scrollIntoView({ block: 'center' }); return;
+  }
   btn.disabled = true;
   const { photos, ...rest } = D;
   const rec = { clientId: D.clientId, userId: me.id, queuedAt: new Date().toISOString(),
-    data: { ...rest, photos: photos.map(p => ({ caption: p.caption, takenAt: p.takenAt })) }, photos: photos.map(p => p.blob) };
+    data: { ...rest, photos: photos.map(p => ({ caption: p.caption, takenAt: p.takenAt, sec: p.sec, item: p.item })) }, photos: photos.map(p => p.blob) };
   try { await idb.outPut(rec); await idb.del(draftKey()); }
   catch { btn.disabled = false; err.textContent = 'Couldn’t save the report on this phone. Free up some storage and try again.'; return; }
   D = null;

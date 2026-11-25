@@ -30,12 +30,51 @@ app.use(session({
   cookie: { httpOnly: true, sameSite: 'lax', secure: PROD, maxAge: 1000 * 60 * 60 * 24 * 30 },
 }));
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 40 } });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 8 * 1024 * 1024, files: 80 } });
 const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const needAuth = (req, res, next) => req.session.user ? next() : res.status(401).json({ error: 'Please sign in.' });
 const needAdmin = (req, res, next) => req.session.user?.role === 'admin' ? next() : res.status(403).json({ error: 'Admins only.' });
 const publicUser = u => ({ id: u.id, name: u.name, email: u.email, role: u.role, mustChangePassword: u.must_change_password });
 const clean = (v, max = 2000) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const sig = v => typeof v === 'string' && v.startsWith('data:image/png;base64,') && v.length < 400000 ? v : null;
+const oneOf = (v, list) => list.includes(v) ? v : null;
+
+// Accepts the Parker form (checklistVersion parker-*) and reports still queued on phones from the old sample checklist.
+function sanitizeReport(d) {
+  const legacy = !String(d.checklistVersion || '').startsWith('parker');
+  const data = {
+    customer: clean(d.customer, 200), siteName: clean(d.siteName, 200),
+    plantModel: clean(d.plantModel, 200), serialNumber: clean(d.serialNumber, 100),
+    visitStart: d.visitStart && !isNaN(Date.parse(d.visitStart)) ? d.visitStart : null,
+    location: d.location && isFinite(d.location.lat) && isFinite(d.location.lng) ? { lat: +d.location.lat, lng: +d.location.lng, accuracy: +d.location.accuracy || null } : null,
+    checklist: {},
+    customerName: clean(d.customerName, 200), customerEmail: EMAIL_RE.test(clean(d.customerEmail, 200)) ? clean(d.customerEmail, 200) : '',
+    signature: sig(d.signature), checklistVersion: clean(d.checklistVersion, 40),
+  };
+  if (legacy) {
+    Object.assign(data, { siteAddress: clean(d.siteAddress, 400), plantHours: clean(d.plantHours, 50), summary: clean(d.summary, 6000), recommendations: clean(d.recommendations, 6000) });
+    for (const [k, v] of Object.entries(d.checklist || {}))
+      if (/^[a-z]+-\d+$/.test(k) && v && ['good', 'monitor', 'action', 'na'].includes(v.r)) data.checklist[k] = { r: v.r, note: clean(v.note, 1000) };
+    return data;
+  }
+  for (const k of ['projectNo', 'plantType', 'engineers', 'siteContact', 'statusNote', 'hoursSince', 'previousRef', 'nextInspection']) data[k] = clean(d[k], 300);
+  for (const k of ['conditions', 'topConcerns', 'recBefore', 'recShutdown', 'recSpares', 'recFurther']) data[k] = clean(d[k], 4000);
+  data.inspectionDate = /^\d{4}-\d{2}-\d{2}$/.test(d.inspectionDate) ? d.inspectionDate : null;
+  data.statusRunning = d.statusRunning === true; data.statusShutdown = d.statusShutdown === true;
+  data.safety = Array.isArray(d.safety) ? d.safety.slice(0, 20).map(x => x === true) : [];
+  data.overall = oneOf(d.overall, ['ok', 'monitor', 'action', 'urgent']);
+  data.safe = oneOf(d.safe, ['yes', 'conditions', 'no']);
+  data.engineerSignature = sig(d.engineerSignature);
+  for (const [k, v] of Object.entries(d.checklist || {}))
+    if (/^5\.\d{1,2}\.\d{1,2}$/.test(k) && v && ['ok', 'monitor', 'action', 'urgent', 'na'].includes(v.r))
+      data.checklist[k] = { r: v.r, note: clean(v.note, 1500), action: clean(v.action, 1500) };
+  data.parts = (Array.isArray(d.parts) ? d.parts : []).slice(0, 60).map(p => ({
+    issue: clean(p.issue, 20), desc: clean(p.desc, 300), partNo: clean(p.partNo, 100), qty: clean(p.qty, 20),
+    needed: oneOf(p.needed, ['now', 'shutdown', 'spare']), quote: p.quote === true,
+  })).filter(p => p.desc || p.partNo);
+  return data;
+}
 
 /* ---------- auth ---------- */
 const attempts = new Map();
@@ -120,7 +159,7 @@ async function loadReport(id) {
   return r;
 }
 async function loadPhotos(id) {
-  const { rows } = await pool.query('SELECT caption, taken_at, data FROM photos WHERE report_id=$1 ORDER BY idx', [id]);
+  const { rows } = await pool.query('SELECT caption, taken_at, data, sec, item FROM photos WHERE report_id=$1 ORDER BY idx', [id]);
   return rows;
 }
 async function emailReport(r) {
@@ -141,7 +180,7 @@ async function emailReport(r) {
 }
 const canSee = (req, r) => req.session.user.role === 'admin' || r.user_id === req.session.user.id;
 
-app.post('/api/reports', needAuth, upload.array('photos', 40), wrap(async (req, res) => {
+app.post('/api/reports', needAuth, upload.array('photos', 80), wrap(async (req, res) => {
   let d;
   try { d = JSON.parse(req.body.data || '{}'); } catch { return res.status(400).json({ error: 'Bad form data.' }); }
   const clientId = clean(d.clientId, 64);
@@ -154,19 +193,7 @@ app.post('/api/reports', needAuth, upload.array('photos', 40), wrap(async (req, 
   if (!files.length) return res.status(400).json({ error: 'Add at least one photo.' });
   for (const f of files) if (!/^image\/(jpeg|png)$/.test(f.mimetype)) return res.status(400).json({ error: 'Photos must be JPEG or PNG.' });
   const caps = Array.isArray(d.photos) ? d.photos : [];
-  const data = {
-    customer: clean(d.customer, 200), siteName: clean(d.siteName, 200), siteAddress: clean(d.siteAddress, 400),
-    plantModel: clean(d.plantModel, 200), serialNumber: clean(d.serialNumber, 100), plantHours: clean(d.plantHours, 50),
-    visitStart: d.visitStart && !isNaN(Date.parse(d.visitStart)) ? d.visitStart : null,
-    location: d.location && isFinite(d.location.lat) && isFinite(d.location.lng) ? { lat: +d.location.lat, lng: +d.location.lng, accuracy: +d.location.accuracy || null } : null,
-    checklist: {}, summary: clean(d.summary, 6000), recommendations: clean(d.recommendations, 6000),
-    customerName: clean(d.customerName, 200), customerEmail: /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean(d.customerEmail, 200)) ? clean(d.customerEmail, 200) : '',
-    signature: typeof d.signature === 'string' && d.signature.startsWith('data:image/png;base64,') && d.signature.length < 400000 ? d.signature : null,
-    checklistVersion: clean(d.checklistVersion, 40),
-  };
-  for (const [k, v] of Object.entries(d.checklist || {})) {
-    if (/^[a-z]+-\d+$/.test(k) && v && ['good', 'monitor', 'action', 'na'].includes(v.r)) data.checklist[k] = { r: v.r, note: clean(v.note, 1000) };
-  }
+  const data = sanitizeReport(d);
   if (!data.customer || !data.siteName) return res.status(400).json({ error: 'Customer and site are required.' });
 
   const client = await pool.connect();
@@ -180,8 +207,9 @@ app.post('/api/reports', needAuth, upload.array('photos', 40), wrap(async (req, 
     for (let i = 0; i < files.length; i++) {
       const c = caps[i] || {};
       const taken = c.takenAt && !isNaN(Date.parse(c.takenAt)) ? c.takenAt : null;
-      await client.query('INSERT INTO photos(report_id,idx,caption,taken_at,mime,data) VALUES($1,$2,$3,$4,$5,$6)',
-        [id, i, clean(c.caption, 300), taken, files[i].mimetype, files[i].buffer]);
+      const sec = /^(cover|5\.\d{1,2})$/.test(c.sec) ? c.sec : null, item = /^5\.\d{1,2}\.\d{1,2}$/.test(c.item) ? c.item : null;
+      await client.query('INSERT INTO photos(report_id,idx,caption,taken_at,mime,data,sec,item) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+        [id, i, clean(c.caption, 300), taken, files[i].mimetype, files[i].buffer, sec, item]);
     }
     await client.query('COMMIT');
   } catch (e) {
@@ -203,7 +231,7 @@ app.get('/api/reports', needAuth, wrap(async (req, res) => {
   const { rows } = await pool.query(`SELECT r.id, r.ref, r.created_at, r.email_status, r.email_error, r.emailed_to,
       r.data->>'customer' AS customer, r.data->>'siteName' AS site, u.name AS engineer,
       (SELECT count(*) FROM photos p WHERE p.report_id=r.id)::int AS photos,
-      (SELECT count(*) FROM jsonb_each(r.data->'checklist') e WHERE e.value->>'r'='action')::int AS actions
+      (SELECT count(*) FROM jsonb_each(r.data->'checklist') e WHERE e.value->>'r' IN ('action','urgent'))::int AS actions
     FROM reports r JOIN users u ON u.id=r.user_id ${all ? '' : 'WHERE r.user_id=$1'} ORDER BY r.created_at DESC LIMIT 200`,
     all ? [] : [req.session.user.id]);
   res.json({ reports: rows });

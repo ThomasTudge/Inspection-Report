@@ -45,6 +45,8 @@ async function migrate() {
       data BYTEA NOT NULL
     );
     CREATE INDEX IF NOT EXISTS photos_report_idx ON photos (report_id, idx);
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS sec TEXT;
+    ALTER TABLE photos ADD COLUMN IF NOT EXISTS item TEXT;
   `);
 
   // One-off account setup from SET_USERS: JSON array of {email, password, name?, role?}.

@@ -4,7 +4,10 @@ Phone web app for engineers inspecting asphalt plants on site: sign in, fill in 
 
 - Works with poor signal: drafts are saved on the phone as you type, and submitted reports wait in an outbox on the phone until there is signal.
 - Individual logins. Admins add engineers, reset passwords and see every report.
-- The checklist is in `public/checklist.json` (currently a sample to be replaced with Parker's own).
+- The form follows Parker's *Asphalt Plant Inspection Report* (sections 1–9). The checklist areas and lines are in `public/checklist.json`; the PDF layout is in `src/pdf.js`.
+- Photos can be taken against any checklist line or area (plus a cover photo). They get refs like `5.2-1` and appear under their area in the PDF; line photos are also listed in the Issues table.
+- Every Monitor, Action or Urgent line goes into Section 6 (Issues) automatically. Parts in Section 7 can be linked to an issue.
+- Reports made on the earlier sample checklist still open with the old PDF layout (`src/pdf-v1.js`).
 
 ## Running on Railway
 
