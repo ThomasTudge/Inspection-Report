@@ -6,7 +6,9 @@ const bcrypt = require('bcryptjs');
 const multer = require('multer');
 const { pool, migrate } = require('./db');
 const { buildPdf } = require('./pdf');
-const { sendReportEmail, mailConfigured, describeMail } = require('./mail');
+const { sendReportEmail, sendQuoteEmail, mailConfigured, describeMail } = require('./mail');
+const Model = require('../public/model.js');
+const CHECKLIST = require('../public/checklist.json');
 const { runImports } = require('./import-once');
 const { parseManual, findPassword } = require('./manual');
 
@@ -183,6 +185,20 @@ async function emailReport(r, to) {
 }
 const canSee = (req, r) => req.session.user.role === 'admin' || r.user_id === req.session.user.id;
 const canEdit = canSee; // engineers manage their own reports, admins any
+
+// Parts marked "Quote needed" go to Parts & Aftersales once; again only if that list changes in a revision.
+async function quoteRequest(r) {
+  const parts = (r.data.parts || []).filter(p => p.quote);
+  if (!parts.length || !mailConfigured()) return null;
+  const key = require('crypto').createHash('sha1').update(JSON.stringify(parts.map(p => [p.issue, p.partNo, p.desc, p.qty, p.needed]))).digest('hex');
+  if (r.data.quoteSent === key) return { status: 'unchanged' };
+  try {
+    const to = await sendQuoteEmail(r, parts, Model.issues(CHECKLIST, r.data.checklist));
+    await pool.query(`UPDATE reports SET data = data || jsonb_build_object('quoteSent', $2::text, 'quoteSentAt', now()) WHERE id=$1`, [r.id, key]);
+    console.log(`Quote request for ${r.ref} (${parts.length} parts) sent to ${to.join(', ')}`);
+    return { status: 'sent', to, parts: parts.length };
+  } catch (e) { console.error('Quote email failed', r.ref, e.message); return { status: 'failed', error: e.message }; }
+}
 const isParker = r => String(r.data?.checklistVersion || '').startsWith('parker');
 
 async function savePhotos(client, id, files, caps) {
@@ -237,7 +253,7 @@ app.post('/api/reports', needAuth, upload.array('photos', 80), wrap(async (req, 
 
   const r = await loadReport(id);
   const email = await emailReport(r);
-  res.json({ id, ref: r.ref, email });
+  res.json({ id, ref: r.ref, email, quote: await quoteRequest(r) });
 }));
 
 app.get('/api/reports', needAuth, wrap(async (req, res) => {
@@ -283,7 +299,7 @@ app.put('/api/reports/:id', needAuth, upload.array('photos', 80), wrap(async (re
   const up = parseUpload(req, res); if (!up) return;
   const editId = clean(up.d.clientId, 64);
   if (editId && r.data.lastEditId === editId) return res.json({ id: r.id, ref: r.ref, revision: r.data.revision || 1, email: { status: r.email_status }, duplicate: true });
-  const data = { ...up.data, revision: (r.data.revision || 1) + 1, revisedAt: new Date().toISOString(), revisedBy: req.session.user.name, lastEditId: editId };
+  const data = { ...up.data, revision: (r.data.revision || 1) + 1, revisedAt: new Date().toISOString(), revisedBy: req.session.user.name, lastEditId: editId, quoteSent: r.data.quoteSent };
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -293,7 +309,7 @@ app.put('/api/reports/:id', needAuth, upload.array('photos', 80), wrap(async (re
     await client.query('COMMIT');
   } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
   const fresh = await loadReport(r.id);
-  res.json({ id: r.id, ref: r.ref, revision: data.revision, email: await emailReport(fresh) });
+  res.json({ id: r.id, ref: r.ref, revision: data.revision, email: await emailReport(fresh), quote: await quoteRequest(fresh) });
 }));
 
 app.delete('/api/reports/:id', needAuth, wrap(async (req, res) => {

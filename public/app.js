@@ -235,7 +235,8 @@ async function flushOutbox(manual) {
         const j = await api(rec.editOf ? `/api/reports/${rec.editOf}` : '/api/reports', { method: rec.editOf ? 'PUT' : 'POST', body: fd });
         await idb.outDel(rec.clientId);
         const e = j.email || {}, what = rec.editOf ? `${j.ref} revision ${j.revision}` : j.ref;
-        toast(e.status === 'sent' ? `${what} saved and emailed` : e.status === 'failed' ? `${what} saved, but the email failed. You can retry from the list.` : `${what} saved`, 5000);
+        const qt = j.quote?.status === 'sent' ? ` Quote request sent for ${j.quote.parts} part${j.quote.parts === 1 ? '' : 's'}.` : j.quote?.status === 'failed' ? ' The quote request email failed.' : '';
+        toast((e.status === 'sent' ? `${what} saved and emailed.` : e.status === 'failed' ? `${what} saved, but the email failed. You can retry from the list.` : `${what} saved.`) + qt, 6000);
       } catch (err) {
         if (err.status === 401) { flushing = false; return sessionLost(); }
         if (err.status === 404 && rec.editOf) { await idb.outDel(rec.clientId); toast(`${rec.editRef} no longer exists, so the changes were dropped.`, 6000); continue; }
@@ -476,7 +477,7 @@ function renderParts() {
     ${p.drawing ? `<p class="small muted" style="margin:-6px 0 10px">From the parts manual: ${esc(p.drawing)}</p>` : ''}
     <div class="grid2"><label class="f">Part no.<input type="text" data-p="${p.id}|partNo" value="${esc(p.partNo)}"></label><label class="f">Qty<input type="text" inputmode="numeric" data-p="${p.id}|qty" value="${esc(p.qty)}"></label></div>
     <div class="f"><span class="lbl">Needed</span><div class="row">${[['now', 'Now'], ['shutdown', 'Next shutdown'], ['spare', 'Spare']].map(([v, l]) => `<label class="cb"><input type="radio" name="need-${p.id}" data-p="${p.id}|needed" value="${v}" ${p.needed === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
-    <label class="cb"><input type="checkbox" data-p="${p.id}|quote" ${p.quote ? 'checked' : ''}><span>Quote needed</span></label></div>`).join('') || '<p class="muted small" style="margin:0 0 10px">No parts added.</p>';
+    <label class="cb"><input type="checkbox" data-p="${p.id}|quote" ${p.quote ? 'checked' : ''}><span>Quote needed <span class="small muted">(emails Parts &amp; Aftersales when submitted)</span></span></label></div>`).join('') || '<p class="muted small" style="margin:0 0 10px">No parts added.</p>';
 }
 
 /* ---------- parts manuals: chooser on the report ---------- */
@@ -634,7 +635,7 @@ function renderPkBody(units) {
   body.onclick = e => {
     const b = e.target.closest('[data-addpart]'); if (!b || b.disabled) return;
     const [un, partNo, ref] = b.dataset.addpart.split('|'), u = PK.units.find(x => x.un === un), r = u.rows.find(x => x.partNo === partNo && x.ref === ref);
-    D.parts.push({ id: uuid(), issue: PK.issue || '', desc: r.desc, partNo: r.partNo, qty: '1', needed: '', quote: true, drawing: `${u.un} ref ${r.ref || '-'}` });
+    D.parts.push({ id: uuid(), issue: PK.issue || '', desc: r.desc, partNo: r.partNo, qty: '1', needed: '', quote: false, drawing: `${u.un} ref ${r.ref || '-'}` });
     save(); renderParts(); b.textContent = '✓'; b.disabled = true; b.classList.remove('pri');
     toast(`Added ${r.partNo} ${r.desc} to 7. Parts required`, 2500);
   };

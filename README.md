@@ -24,6 +24,7 @@ Needs a Postgres database. Environment variables:
 | `MAIL_FROM` (or `RESEND_FROM`) | Sender, e.g. `Parker Plant Inspections <inspections@parkerplant.com>` (domain must be verified in Resend). Defaults to Resend's test sender. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Alternative to Resend: send through a mailbox, e.g. Microsoft 365 (`smtp.office365.com`, port 587). |
 | `MANUAL_PDF_PASSWORD` | Optional: the usual password for protected parts manuals, tried automatically. Otherwise the engineer is asked for it once and their phone remembers it. |
+| `QUOTE_EMAIL` | Who gets the spares quotation request when parts are marked "Quote needed" (default jack.gregory@parkerplant.com; comma-separate several). |
 | `OFFICE_EMAIL` | Comma-separated addresses copied on every report |
 | `REPLY_TO` | Optional reply-to address |
 
