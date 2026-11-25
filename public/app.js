@@ -127,14 +127,14 @@ function showAccount() {
 async function showHome(all) {
   const draft = await idb.get(draftKey()).catch(() => null);
   view.innerHTML = `<div class="row" style="justify-content:space-between;margin-bottom:16px"><h1>${all ? 'All inspections' : `Hello, ${esc(me.name.split(' ')[0])}`}</h1></div>
-    ${all ? '' : `<a class="btn pri big" href="#new" style="margin-bottom:${draft ? 8 : 18}px">${draft ? 'Continue inspection' : 'Start new inspection'}</a>
-    ${draft ? `<p class="small muted" style="margin:0 0 18px">Draft: ${esc(draft.customer || 'no customer yet')}${draft.siteName ? ', ' + esc(draft.siteName) : ''} · started ${fmtDT(draft.visitStart)} · <button class="btn sm warn" id="discard">Discard draft</button></p>` : ''}`}
+    ${all ? '' : `<a class="btn pri big" href="#new" style="margin-bottom:${draft ? 8 : 18}px">${draft ? (draft.editOf ? `Continue editing ${esc(draft.editRef)}` : 'Continue inspection') : 'Start new inspection'}</a>
+    ${draft ? `<p class="small muted" style="margin:0 0 18px">${draft.editOf ? 'Editing' : 'Draft'}: ${esc(draft.customer || 'no customer yet')}${draft.siteName ? ', ' + esc(draft.siteName) : ''} · started ${fmtDT(draft.visitStart)} · <button class="btn sm warn" id="discard">${draft.editOf ? 'Cancel edit' : 'Discard draft'}</button></p>` : ''}`}
     <div id="outbox"></div>
     <div class="card"><div class="sec-h" style="margin-top:0"><h2>${all ? 'Every engineer' : 'Sent reports'}</h2></div><div id="reps"><p class="muted">Loading…</p></div></div>
     ${!mailOn && me.role === 'admin' ? '<p class="small muted">Email is switched off until a Resend API key is added on the server. Reports are still saved and the PDFs can be opened here.</p>' : ''}`;
   if ($('#discard')) $('#discard').onclick = async e => {
-    if (e.target.dataset.sure) { await idb.del(draftKey()); toast('Draft discarded'); showHome(all); }
-    else { e.target.dataset.sure = 1; e.target.textContent = 'Tap again to discard'; }
+    if (e.target.dataset.sure) { await idb.del(draftKey()); toast(draft.editOf ? 'Edit cancelled. The report is unchanged.' : 'Draft discarded'); showHome(all); }
+    else { e.target.dataset.sure = 1; e.target.textContent = draft.editOf ? 'Tap again to cancel edit' : 'Tap again to discard'; }
   };
   renderOutbox();
   try {
@@ -156,16 +156,58 @@ function statusTag(r) {
 function renderReports(reports, all) {
   const el = $('#reps'); if (!el) return;
   if (!reports.length) { el.innerHTML = '<p class="muted" style="margin:0">No reports yet.</p>'; return; }
-  el.innerHTML = `<ul class="list">${reports.map(r => `<li class="rep"><div class="t"><b>${esc(r.customer)} · ${esc(r.site)}</b>
-      <small>${esc(r.ref)} · ${fmtDT(r.created_at)}${all ? ' · ' + esc(r.engineer) : ''} · ${r.photos} photo${r.photos === 1 ? '' : 's'}${r.actions ? ` · <span style="color:var(--action);font-weight:600">${r.actions} action${r.actions > 1 ? 's' : ''}</span>` : ''}</small>
-      <div class="row" style="margin-top:6px">${statusTag(r)}${r.email_status === 'failed' && mailOn ? `<button class="btn sm" data-resend="${r.id}">Try email again</button>` : ''}</div></div>
+  el.innerHTML = `<ul class="list">${reports.map(r => `<li class="rep" data-id="${r.id}"><div class="t"><b>${esc(r.customer)} · ${esc(r.site)}</b>
+      <small>${esc(r.ref)}${r.revision > 1 ? ` rev ${r.revision}` : ''} · ${fmtDT(r.created_at)}${all ? ' · ' + esc(r.engineer) : ''} · ${r.photos} photo${r.photos === 1 ? '' : 's'}${r.actions ? ` · <span style="color:var(--action);font-weight:600">${r.actions} action${r.actions > 1 ? 's' : ''}</span>` : ''}</small>
+      <div class="row" style="margin-top:6px">${statusTag(r)}</div>
+      <div class="row acts">${r.editable ? `<button class="btn sm" data-edit="${r.id}">Edit</button>` : ''}<button class="btn sm" data-mail="${r.id}" data-to="${esc(r.engineer_email)}">Email</button><button class="btn sm warn" data-del="${r.id}">Delete</button></div>
+      <div class="mailbox" hidden></div></div>
       <a class="btn sm" href="/api/reports/${r.id}/pdf" target="_blank" rel="noopener">PDF</a></li>`).join('')}</ul>`;
-  $$('[data-resend]', el).forEach(b => b.onclick = async () => {
-    b.disabled = true; b.textContent = 'Sending…';
-    try { const j = await api(`/api/reports/${b.dataset.resend}/resend`, { method: 'POST' });
-      toast(j.email.status === 'sent' ? 'Email sent' : 'Email failed: ' + (j.email.error || '')); route();
-    } catch (e) { toast(e.message); b.disabled = false; b.textContent = 'Try email again'; }
+  $$('[data-edit]', el).forEach(b => b.onclick = () => startEdit(+b.dataset.edit, b));
+  $$('[data-del]', el).forEach(b => b.onclick = async () => {
+    if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = 'Tap again to delete'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = 'Delete'; } }, 4000); return; }
+    b.disabled = true;
+    try { await api(`/api/reports/${b.dataset.del}`, { method: 'DELETE' }); toast('Report deleted'); route(); }
+    catch (e) { toast(navigator.onLine ? e.message : 'You need signal to delete a report.'); b.disabled = false; }
   });
+  $$('[data-mail]', el).forEach(b => b.onclick = () => {
+    if (!mailOn) { toast('Email isn’t set up on the server yet. Ask your admin.', 5000); return; }
+    const box = $('.mailbox', b.closest('.rep')); box.hidden = !box.hidden; if (box.hidden) return;
+    box.innerHTML = `<label class="f" style="margin:8px 0 6px">Send the PDF to (separate several with commas)<input type="email" multiple value="${esc(b.dataset.to)}"></label>
+      <button class="btn sm pri">Send</button> <span class="small muted"></span>`;
+    const inp = $('input', box), go = $('button', box), msg = $('span', box);
+    inp.focus();
+    go.onclick = async () => {
+      const to = inp.value.split(/[,;\s]+/).filter(Boolean);
+      if (!to.length) return;
+      go.disabled = true; msg.textContent = 'Sending…';
+      try { const j = await api(`/api/reports/${b.dataset.mail}/email`, { method: 'POST', body: JSON.stringify({ to }) });
+        if (j.email.status === 'sent') { toast('Emailed to ' + to.join(', ')); box.hidden = true; route(); } else { msg.textContent = 'Failed: ' + (j.email.error || ''); go.disabled = false; }
+      } catch (e) { msg.textContent = navigator.onLine ? e.message : 'You need signal to send email.'; go.disabled = false; }
+    };
+  });
+}
+async function startEdit(id, btn) {
+  const cur = await idb.get(draftKey()).catch(() => null);
+  if (cur && cur.editOf !== id) { toast(cur.editOf ? `You’re already editing ${cur.editRef}. Submit or cancel that first.` : 'You have an unfinished inspection. Submit or discard it first.', 6000); return; }
+  if (cur) { location.hash = '#new'; return; }
+  if (!navigator.onLine) { toast('You need signal to open a report for editing.'); return; }
+  btn.disabled = true; btn.textContent = 'Opening…';
+  try {
+    const r = await api(`/api/reports/${id}`);
+    if (!r.editable) throw new Error('This report can’t be edited.');
+    const photos = [];
+    for (const p of r.photos) {
+      const res = await fetch(`/api/reports/${id}/photos/${p.id}`, { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('Couldn’t download the photos.');
+      const blob = await res.blob();
+      photos.push({ id: uuid(), blob, caption: p.caption || '', sec: p.sec || '5.15', item: p.item || null, takenAt: p.taken_at || r.created_at, orig: 0 });
+    }
+    const { revision, revisedAt, revisedBy, lastEditId, ...data } = r.data;
+    const d = { ...data, clientId: uuid(), editOf: r.id, editRef: r.ref, editRevision: (revision || 1) + 1, photos,
+      safety: data.safety || [], checklist: data.checklist || {}, parts: (data.parts || []).map(p => ({ id: uuid(), ...p })) };
+    await idb.set(draftKey(), d);
+    location.hash = '#new';
+  } catch (e) { toast(e.message); btn.disabled = false; btn.textContent = 'Edit'; }
 }
 async function renderOutbox() {
   const el = $('#outbox'); if (!el) return;
@@ -174,7 +216,7 @@ async function renderOutbox() {
   el.innerHTML = `<div class="banner"><div class="row" style="justify-content:space-between"><b>${items.length} report${items.length > 1 ? 's' : ''} waiting to send</b>
     <button class="btn sm" id="sendNow" ${navigator.onLine ? '' : 'disabled'}>Send now</button></div>
     <p class="small" style="margin:6px 0 0">${navigator.onLine ? 'Sending…' : 'Saved on this phone. They send automatically when you have signal and the app is open.'}</p>
-    <ul class="list small">${items.map(r => `<li style="padding-top:6px">${esc(r.data.customer)}, ${esc(r.data.siteName)} · ${r.photos.length} photos${r.error ? ` · <span style="color:var(--action)">${esc(r.error)}</span>` : ''}</li>`).join('')}</ul></div>`;
+    <ul class="list small">${items.map(r => `<li style="padding-top:6px">${r.editOf ? `Changes to ${esc(r.editRef)}: ` : ''}${esc(r.data.customer)}, ${esc(r.data.siteName)} · ${r.photos.length} photos${r.error ? ` · <span style="color:var(--action)">${esc(r.error)}</span>` : ''}</li>`).join('')}</ul></div>`;
   $('#sendNow').onclick = () => flushOutbox(true);
 }
 
@@ -190,12 +232,13 @@ async function flushOutbox(manual) {
       fd.append('data', JSON.stringify(rec.data));
       rec.photos.forEach((b, i) => fd.append('photos', b, `photo-${i + 1}.jpg`));
       try {
-        const j = await api('/api/reports', { method: 'POST', body: fd });
+        const j = await api(rec.editOf ? `/api/reports/${rec.editOf}` : '/api/reports', { method: rec.editOf ? 'PUT' : 'POST', body: fd });
         await idb.outDel(rec.clientId);
-        const e = j.email || {};
-        toast(e.status === 'sent' ? `${j.ref} sent and emailed` : e.status === 'failed' ? `${j.ref} saved, but the email failed. You can retry from the list.` : `${j.ref} saved`, 5000);
+        const e = j.email || {}, what = rec.editOf ? `${j.ref} revision ${j.revision}` : j.ref;
+        toast(e.status === 'sent' ? `${what} saved and emailed` : e.status === 'failed' ? `${what} saved, but the email failed. You can retry from the list.` : `${what} saved`, 5000);
       } catch (err) {
         if (err.status === 401) { flushing = false; return sessionLost(); }
+        if (err.status === 404 && rec.editOf) { await idb.outDel(rec.clientId); toast(`${rec.editRef} no longer exists, so the changes were dropped.`, 6000); continue; }
         if (err.status && err.status < 500) { rec.error = err.message; await idb.outPut(rec); }
         if (manual) toast(err.status ? err.message : 'Couldn’t reach the server. Will try again.');
         break;
@@ -245,7 +288,9 @@ async function showForm() {
   const PICK = (k, opts) => `<div class="seg pick" data-pick="${k}" style="grid-template-columns:repeat(${opts.length},minmax(0,1fr))">${opts.map(([v, l]) => `<button type="button" data-v="${v}" data-r="${v}" aria-pressed="${D[k] === v}">${l}</button>`).join('')}</div>`;
   const ADD = (sec, item, label, pri) => `<label class="btn sm ${pri ? 'pri' : ''}">${label}<input type="file" accept="image/*" ${item !== 'gal' ? 'capture="environment"' : 'multiple'} data-add="${sec}|${item === 'gal' ? '' : item || ''}"></label>`;
 
-  view.innerHTML = `<h1 style="margin-bottom:4px">Asphalt plant inspection</h1><p class="muted small" style="margin:0 0 14px">Started ${fmtDT(D.visitStart)} · <span id="gps"></span></p>
+  view.innerHTML = `<h1 style="margin-bottom:4px">${D.editOf ? `Editing ${esc(D.editRef)}` : 'Asphalt plant inspection'}</h1>
+    ${D.editOf ? `<div class="banner small" style="margin:6px 0 12px">Saving creates <b>Revision ${D.editRevision}</b> of ${esc(D.editRef)} and emails the updated PDF. To leave it unchanged, use <b>Cancel edit</b> on the home screen.</div>` : ''}
+    <p class="muted small" style="margin:0 0 14px">Started ${fmtDT(D.visitStart)} · <span id="gps"></span></p>
 
     <div class="card"><h2>1. Report details</h2>
       <div class="grid2">${F('customer', 'Customer *', 'text', 'autocomplete="organization"')}${F('siteName', 'Site *')}</div>
@@ -301,7 +346,7 @@ async function showForm() {
       <div class="row" style="justify-content:space-between;margin-bottom:6px"><span class="lbl">Customer signature</span><button type="button" class="btn sm" data-clr="signature">Clear</button></div>
       <canvas class="pad" data-pad="signature" aria-label="Customer signature pad"></canvas></div>
     <p class="err" id="ferr"></p>
-    <div class="sticky"><div class="in"><span class="saved" id="saved">Draft saves on this phone as you go</span><button class="btn pri" id="submit" style="min-width:150px">Submit report</button></div></div>`;
+    <div class="sticky"><div class="in"><span class="saved" id="saved">Draft saves on this phone as you go</span><button class="btn pri" id="submit" style="min-width:150px">${D.editOf ? 'Save changes' : 'Submit report'}</button></div></div>`;
 
   $$('[data-ph]').forEach(renderPh);
   updateProgress(); renderIssues(); renderParts(); $$('[data-pad]').forEach(setupPad); gps(false);
@@ -434,7 +479,7 @@ function gps(manual) {
     $('#regps').onclick = () => gps(true);
   };
   show();
-  if (D.location && !manual) return;
+  if ((D.location || D.editOf) && !manual) return;
   if (!navigator.geolocation) return;
   el.textContent = 'Finding location…';
   navigator.geolocation.getCurrentPosition(p => {
@@ -511,7 +556,7 @@ async function submit() {
   if (!D.overall) warn.push('overall plant condition is not set');
   if (!D.safe) warn.push('“safe to keep operating” is not answered');
   if (D.safety.some(x => !x)) warn.push('not every safety check is ticked');
-  if (!D.engineerSignature) warn.push('the engineer hasn’t signed');
+  if (!D.engineerSignature && !D.editOf) warn.push('the engineer hasn’t signed');
   const btn = $('#submit');
   if (warn.length && !btn.dataset.sure) {
     btn.dataset.sure = 1; btn.textContent = 'Submit anyway';
@@ -519,8 +564,8 @@ async function submit() {
   }
   btn.disabled = true;
   const { photos, ...rest } = D;
-  const rec = { clientId: D.clientId, userId: me.id, queuedAt: new Date().toISOString(),
-    data: { ...rest, photos: photos.map(p => ({ caption: p.caption, takenAt: p.takenAt, sec: p.sec, item: p.item })) }, photos: photos.map(p => p.blob) };
+  const rec = { clientId: D.clientId, userId: me.id, queuedAt: new Date().toISOString(), editOf: D.editOf || null, editRef: D.editRef || null,
+    data: { ...Object.fromEntries(Object.entries(rest).filter(([k]) => !k.startsWith('edit'))), photos: photos.map(p => ({ caption: p.caption, takenAt: p.takenAt, sec: p.sec, item: p.item })) }, photos: photos.map(p => p.blob) };
   try { await idb.outPut(rec); await idb.del(draftKey()); }
   catch { btn.disabled = false; err.textContent = 'Couldn’t save the report on this phone. Free up some storage and try again.'; return; }
   D = null;

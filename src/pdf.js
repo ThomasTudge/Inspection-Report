@@ -26,7 +26,7 @@ function buildPdf(report, photos) {
 
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margins: { top: 78, bottom: 56, left: 44, right: 44 }, bufferPages: true,
-      info: { Title: `Asphalt Plant Inspection Report ${report.ref}`, Author: 'Parker Plant Limited' } });
+      info: { Title: `Asphalt Plant Inspection Report ${report.ref}${d.revision > 1 ? ' Rev ' + d.revision : ''}`, Author: 'Parker Plant Limited' } });
     const chunks = [];
     doc.on('data', c => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
 
@@ -126,7 +126,7 @@ function buildPdf(report, photos) {
     table(c4, [
       [{ text: 'Customer', bold: true, fill: FIELD }, d.customer, { text: 'Project no.', bold: true, fill: FIELD }, d.projectNo || ''],
       [{ text: 'Site', bold: true, fill: FIELD }, d.siteName, { text: 'Document no.', bold: true, fill: FIELD }, report.ref],
-      [{ text: 'Date issued', bold: true, fill: FIELD }, ukDate(report.created_at), { text: 'Revision', bold: true, fill: FIELD }, '1'],
+      [{ text: 'Date issued', bold: true, fill: FIELD }, ukDate(d.revisedAt || report.created_at), { text: 'Revision', bold: true, fill: FIELD }, String(d.revision || 1)],
     ], { header: false });
     doc.y += 12;
     font('Helvetica-Oblique', 8.5, MUTED).text('This document is not intended to constitute, nor should it be relied upon as, a formal electrical report, comprehensive electrical inspection, or safety audit. Any such inspection, assessment, or audit should be undertaken separately by a suitably competent and appropriately qualified person and documented within a dedicated report, including any findings, recommendations, and required remedial actions.', L, doc.y, { width: W });

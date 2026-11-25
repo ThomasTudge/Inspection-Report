@@ -160,19 +160,19 @@ async function loadReport(id) {
   return r;
 }
 async function loadPhotos(id) {
-  const { rows } = await pool.query('SELECT caption, taken_at, data, sec, item FROM photos WHERE report_id=$1 ORDER BY idx', [id]);
+  const { rows } = await pool.query('SELECT id, caption, taken_at, data, sec, item FROM photos WHERE report_id=$1 ORDER BY idx', [id]);
   return rows;
 }
-async function emailReport(r) {
+async function emailReport(r, to) {
   if (!mailConfigured()) {
     await pool.query(`UPDATE reports SET email_status='not_configured', email_error=NULL WHERE id=$1`, [r.id]);
     return { status: 'not_configured' };
   }
   try {
     const pdf = await buildPdf(r, await loadPhotos(r.id));
-    const to = await sendReportEmail(r, pdf);
-    await pool.query(`UPDATE reports SET email_status='sent', email_error=NULL, emailed_at=now(), emailed_to=$2 WHERE id=$1`, [r.id, to.join(', ')]);
-    return { status: 'sent', to };
+    const sentTo = await sendReportEmail(r, pdf, to);
+    await pool.query(`UPDATE reports SET email_status='sent', email_error=NULL, emailed_at=now(), emailed_to=$2 WHERE id=$1`, [r.id, sentTo.join(', ')]);
+    return { status: 'sent', to: sentTo };
   } catch (e) {
     console.error('Email failed', r.ref, e.message);
     await pool.query(`UPDATE reports SET email_status='failed', email_error=$2 WHERE id=$1`, [r.id, e.message.slice(0, 500)]);
@@ -180,6 +180,28 @@ async function emailReport(r) {
   }
 }
 const canSee = (req, r) => req.session.user.role === 'admin' || r.user_id === req.session.user.id;
+const canEdit = canSee; // engineers manage their own reports, admins any
+const isParker = r => String(r.data?.checklistVersion || '').startsWith('parker');
+
+async function savePhotos(client, id, files, caps) {
+  for (let i = 0; i < files.length; i++) {
+    const c = caps[i] || {};
+    const taken = c.takenAt && !isNaN(Date.parse(c.takenAt)) ? c.takenAt : null;
+    const sec = /^(cover|5\.\d{1,2})$/.test(c.sec) ? c.sec : null, item = /^5\.\d{1,2}\.\d{1,2}$/.test(c.item) ? c.item : null;
+    await client.query('INSERT INTO photos(report_id,idx,caption,taken_at,mime,data,sec,item) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
+      [id, i, clean(c.caption, 300), taken, files[i].mimetype, files[i].buffer, sec, item]);
+  }
+}
+function parseUpload(req, res) {
+  let d;
+  try { d = JSON.parse(req.body.data || '{}'); } catch { res.status(400).json({ error: 'Bad form data.' }); return null; }
+  const files = req.files || [];
+  if (!files.length) { res.status(400).json({ error: 'Add at least one photo.' }); return null; }
+  for (const f of files) if (!/^image\/(jpeg|png)$/.test(f.mimetype)) { res.status(400).json({ error: 'Photos must be JPEG or PNG.' }); return null; }
+  const data = sanitizeReport(d);
+  if (!data.customer || !data.siteName) { res.status(400).json({ error: 'Customer and site are required.' }); return null; }
+  return { d, files, data, caps: Array.isArray(d.photos) ? d.photos : [] };
+}
 
 app.post('/api/reports', needAuth, upload.array('photos', 80), wrap(async (req, res) => {
   let d;
@@ -190,13 +212,8 @@ app.post('/api/reports', needAuth, upload.array('photos', 80), wrap(async (req, 
   const dup = await pool.query('SELECT id, ref, email_status FROM reports WHERE client_id=$1 AND user_id=$2', [clientId, req.session.user.id]);
   if (dup.rows[0]) return res.json({ id: dup.rows[0].id, ref: dup.rows[0].ref, email: { status: dup.rows[0].email_status }, duplicate: true });
 
-  const files = req.files || [];
-  if (!files.length) return res.status(400).json({ error: 'Add at least one photo.' });
-  for (const f of files) if (!/^image\/(jpeg|png)$/.test(f.mimetype)) return res.status(400).json({ error: 'Photos must be JPEG or PNG.' });
-  const caps = Array.isArray(d.photos) ? d.photos : [];
-  const data = sanitizeReport(d);
-  if (!data.customer || !data.siteName) return res.status(400).json({ error: 'Customer and site are required.' });
-
+  const up = parseUpload(req, res); if (!up) return;
+  const { files, data, caps } = up;
   const client = await pool.connect();
   let id;
   try {
@@ -205,13 +222,7 @@ app.post('/api/reports', needAuth, upload.array('photos', 80), wrap(async (req, 
     id = ins.rows[0].id;
     const ref = `PI-${new Date(ins.rows[0].created_at).getFullYear()}-${String(id).padStart(4, '0')}`;
     await client.query('UPDATE reports SET ref=$1 WHERE id=$2', [ref, id]);
-    for (let i = 0; i < files.length; i++) {
-      const c = caps[i] || {};
-      const taken = c.takenAt && !isNaN(Date.parse(c.takenAt)) ? c.takenAt : null;
-      const sec = /^(cover|5\.\d{1,2})$/.test(c.sec) ? c.sec : null, item = /^5\.\d{1,2}\.\d{1,2}$/.test(c.item) ? c.item : null;
-      await client.query('INSERT INTO photos(report_id,idx,caption,taken_at,mime,data,sec,item) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',
-        [id, i, clean(c.caption, 300), taken, files[i].mimetype, files[i].buffer, sec, item]);
-    }
+    await savePhotos(client, id, files, caps);
     await client.query('COMMIT');
   } catch (e) {
     await client.query('ROLLBACK');
@@ -230,7 +241,8 @@ app.post('/api/reports', needAuth, upload.array('photos', 80), wrap(async (req, 
 app.get('/api/reports', needAuth, wrap(async (req, res) => {
   const all = req.session.user.role === 'admin' && req.query.all === '1';
   const { rows } = await pool.query(`SELECT r.id, r.ref, r.created_at, r.email_status, r.email_error, r.emailed_to,
-      r.data->>'customer' AS customer, r.data->>'siteName' AS site, u.name AS engineer,
+      r.data->>'customer' AS customer, r.data->>'siteName' AS site, u.name AS engineer, u.email AS engineer_email, r.user_id,
+      coalesce((r.data->>'revision')::int, 1) AS revision, (r.data->>'checklistVersion') LIKE 'parker%' AS editable,
       (SELECT count(*) FROM photos p WHERE p.report_id=r.id)::int AS photos,
       (SELECT count(*) FROM jsonb_each(r.data->'checklist') e WHERE e.value->>'r' IN ('action','urgent'))::int AS actions
     FROM reports r JOIN users u ON u.id=r.user_id ${all ? '' : 'WHERE r.user_id=$1'} ORDER BY r.created_at DESC LIMIT 200`,
@@ -244,6 +256,60 @@ app.get('/api/reports/:id/pdf', needAuth, wrap(async (req, res) => {
   const pdf = await buildPdf(r, await loadPhotos(r.id));
   res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `${req.query.download ? 'attachment' : 'inline'}; filename="${r.ref}.pdf"`, 'Cache-Control': 'private, no-store' });
   res.send(pdf);
+}));
+
+// Everything needed to reopen a report in the form
+app.get('/api/reports/:id', needAuth, wrap(async (req, res) => {
+  const r = await loadReport(+req.params.id);
+  if (!r || !canSee(req, r)) return res.status(404).json({ error: 'Not found' });
+  const { rows } = await pool.query('SELECT id, caption, taken_at, sec, item FROM photos WHERE report_id=$1 ORDER BY idx', [r.id]);
+  res.json({ id: r.id, ref: r.ref, created_at: r.created_at, user_id: r.user_id, engineer: r.engineer, data: r.data, photos: rows, editable: canEdit(req, r) && isParker(r) });
+}));
+app.get('/api/reports/:id/photos/:pid', needAuth, wrap(async (req, res) => {
+  const r = await loadReport(+req.params.id);
+  if (!r || !canSee(req, r)) return res.status(404).send('Not found');
+  const { rows } = await pool.query('SELECT mime, data FROM photos WHERE id=$1 AND report_id=$2', [+req.params.pid, r.id]);
+  if (!rows[0]) return res.status(404).send('Not found');
+  res.set({ 'Content-Type': rows[0].mime, 'Cache-Control': 'private, max-age=3600' }).send(rows[0].data);
+}));
+
+// Save an edited report as the next revision (same ref). The edit's clientId makes outbox retries harmless.
+app.put('/api/reports/:id', needAuth, upload.array('photos', 80), wrap(async (req, res) => {
+  const r = await loadReport(+req.params.id);
+  if (!r || !canEdit(req, r)) return res.status(404).json({ error: 'Report not found. It may have been deleted.' });
+  if (!isParker(r)) return res.status(400).json({ error: 'Reports made on the old sample checklist can’t be edited.' });
+  const up = parseUpload(req, res); if (!up) return;
+  const editId = clean(up.d.clientId, 64);
+  if (editId && r.data.lastEditId === editId) return res.json({ id: r.id, ref: r.ref, revision: r.data.revision || 1, email: { status: r.email_status }, duplicate: true });
+  const data = { ...up.data, revision: (r.data.revision || 1) + 1, revisedAt: new Date().toISOString(), revisedBy: req.session.user.name, lastEditId: editId };
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE reports SET data=$1 WHERE id=$2', [data, r.id]);
+    await client.query('DELETE FROM photos WHERE report_id=$1', [r.id]);
+    await savePhotos(client, r.id, up.files, up.caps);
+    await client.query('COMMIT');
+  } catch (e) { await client.query('ROLLBACK'); throw e; } finally { client.release(); }
+  const fresh = await loadReport(r.id);
+  res.json({ id: r.id, ref: r.ref, revision: data.revision, email: await emailReport(fresh) });
+}));
+
+app.delete('/api/reports/:id', needAuth, wrap(async (req, res) => {
+  const r = await loadReport(+req.params.id);
+  if (!r || !canEdit(req, r)) return res.status(404).json({ error: 'Not found' });
+  await pool.query('DELETE FROM reports WHERE id=$1', [r.id]);
+  console.log(`Report ${r.ref} deleted by user ${req.session.user.id}`);
+  res.json({ ok: true });
+}));
+
+// Email the PDF to chosen addresses (default: the engineer who did the inspection)
+app.post('/api/reports/:id/email', needAuth, wrap(async (req, res) => {
+  const r = await loadReport(+req.params.id);
+  if (!r || !canSee(req, r)) return res.status(404).json({ error: 'Not found' });
+  if (!mailConfigured()) return res.status(400).json({ error: 'Email isn’t set up on the server yet.' });
+  const list = (Array.isArray(req.body.to) ? req.body.to : [r.engineer.email]).map(x => clean(x, 200).toLowerCase()).filter(Boolean);
+  if (!list.length || list.length > 10 || !list.every(x => EMAIL_RE.test(x))) return res.status(400).json({ error: 'Enter valid email addresses.' });
+  res.json({ email: await emailReport(r, list) });
 }));
 
 app.post('/api/reports/:id/resend', needAuth, wrap(async (req, res) => {

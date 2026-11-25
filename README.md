@@ -7,6 +7,7 @@ Phone web app for engineers inspecting asphalt plants on site: sign in, fill in 
 - The form follows Parker's *Asphalt Plant Inspection Report* (sections 1–9). The checklist areas and lines are in `public/checklist.json`; the PDF layout is in `src/pdf.js`.
 - Photos can be taken against any checklist line or area (plus a cover photo). They get refs like `5.2-1` and appear under their area in the PDF; line photos are also listed in the Issues table.
 - Every Monitor, Action or Urgent line goes into Section 6 (Issues) automatically. Parts in Section 7 can be linked to an issue.
+- Engineers can edit or delete their own reports (admins any). An edit keeps the report number, becomes the next revision and is emailed again. Any report can be emailed to chosen addresses from the list.
 - Reports made on the earlier sample checklist still open with the old PDF layout (`src/pdf-v1.js`).
 
 ## Running on Railway
@@ -18,8 +19,9 @@ Needs a Postgres database. Environment variables:
 | `DATABASE_URL` | Postgres connection string (`${{Postgres.DATABASE_URL}}`) |
 | `SESSION_SECRET` | Long random string used to sign login cookies |
 | `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME` | Creates the first admin on first start only. They must change the password at first sign-in. |
-| `RESEND_API_KEY` | Turns on emailing. Without it reports are saved but not emailed. |
-| `MAIL_FROM` | Sender, e.g. `Parker Plant Inspections <inspections@parkerplant.com>` (domain must be verified in Resend). Defaults to Resend's test sender. |
+| `RESEND_API_KEY` | Turns on emailing through Resend. Without it (or the SMTP settings) reports are saved but not emailed. |
+| `MAIL_FROM` (or `RESEND_FROM`) | Sender, e.g. `Parker Plant Inspections <inspections@parkerplant.com>` (domain must be verified in Resend). Defaults to Resend's test sender. |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Alternative to Resend: send through a mailbox, e.g. Microsoft 365 (`smtp.office365.com`, port 587). |
 | `OFFICE_EMAIL` | Comma-separated addresses copied on every report |
 | `REPLY_TO` | Optional reply-to address |
 

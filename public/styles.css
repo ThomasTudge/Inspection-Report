@@ -120,3 +120,5 @@ input[type=date]{width:100%;font:16px Inter,sans-serif;color:var(--ink);border:1
 .pad{width:100%;height:150px;background:#fff;border:1px dashed #9fb0bd;border-radius:12px;touch-action:none;display:block}
 .card h3{font-size:17px}
 @media(max-width:400px){.seg button{font-size:12px}}
+.rep .acts{margin-top:8px;gap:8px}.rep .acts .btn{min-height:34px}
+.mailbox input{font-size:15px}
