@@ -10,16 +10,19 @@ async function runImports() {
   const dir = path.join(__dirname, '..', 'imports');
   if (!key || !fs.existsSync(dir)) return;
   for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.enc'))) {
-    try { await importFile(path.join(dir, f), Buffer.from(key, 'hex')); }
+    try { await importFile(path.join(dir, f), key); }
     catch (e) { console.error(`IMPORT ${f}: failed: ${e.message}`); }
   }
 }
 
-async function importFile(file, key) {
+// File layout: 'PPI2' | salt(16) | iv(12) | tag(16) | ciphertext. Key = scrypt(IMPORT_KEY passphrase, salt).
+async function importFile(file, pass) {
   const raw = fs.readFileSync(file);
-  const d = crypto.createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
-  d.setAuthTag(raw.subarray(12, 28));
-  const b = JSON.parse(Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString());
+  if (raw.subarray(0, 4).toString() !== 'PPI2') throw new Error('unknown file format');
+  const key = crypto.scryptSync(pass, raw.subarray(4, 20), 32);
+  const d = crypto.createDecipheriv('aes-256-gcm', key, raw.subarray(20, 32));
+  d.setAuthTag(raw.subarray(32, 48));
+  const b = JSON.parse(Buffer.concat([d.update(raw.subarray(48)), d.final()]).toString());
 
   let { rows } = await pool.query('SELECT id, active FROM users WHERE lower(email)=$1', [b.user.email.toLowerCase()]);
   let userId;
