@@ -56,7 +56,7 @@ function buildMenu() {
   if (!me) { m.hidden = true; return; }
   m.innerHTML = `<div class="who">Signed in as <b>${esc(me.name)}</b></div><a href="#home">My inspections</a>
     ${me.role === 'admin' ? '<a href="#all">All inspections</a><a href="#users">Engineers and logins</a>' : ''}
-    <a href="#account">Change password</a><button id="logout">Sign out</button>`;
+    <a href="#manuals">Parts manuals</a><a href="#account">Change password</a><button id="logout">Sign out</button>`;
   $('#logout').onclick = logout;
 }
 $('#menuBtn').onclick = e => { e.stopPropagation(); const m = $('#menu'); m.hidden = !m.hidden; $('#menuBtn').setAttribute('aria-expanded', !m.hidden); };
@@ -84,6 +84,7 @@ async function route() {
   if (h === 'login') return me ? (location.hash = '#home') : showLogin();
   if (h === 'new') return showForm();
   if (h === 'account') return showAccount();
+  if (h === 'manuals') return showManuals();
   if (h === 'users' && me.role === 'admin') return showUsers();
   if (h === 'all' && me.role === 'admin') return showHome(true);
   return showHome(false);
@@ -299,6 +300,8 @@ async function showForm() {
       <datalist id="ptypes"><option value="Batch plant"><option value="Continuous / drum mix plant"><option value="Mobile batch plant"></datalist>
       <div class="grid2">${F('inspectionDate', 'Inspection date', 'date')}${F('engineers', 'Parker engineer(s)')}</div>
       ${F('siteContact', 'Customer contact on site')}
+      <label class="f">Parts manual for this plant<select id="manualSel"><option value="">Loading…</option></select>
+        <span class="small muted" style="font-weight:400" id="manualNote">Lets you pick replacement parts from the drawings and parts lists.</span></label>
       <div class="f"><span class="lbl">Plant status</span><div class="row">${CB('data-cb="statusRunning"', D.statusRunning, 'Running')}${CB('data-cb="statusShutdown"', D.statusShutdown, 'Shut down')}</div>
         <input type="text" data-f="statusNote" placeholder="Note, e.g. both inspections carried out" value="${esc(D.statusNote || '')}" style="margin-top:8px"></div>
       <div class="grid2">${F('hoursSince', 'Hours or tonnes since last inspection')}${F('previousRef', 'Previous report ref (and open items)')}</div>
@@ -317,7 +320,7 @@ async function showForm() {
       ${Model.items(s).map(it => itemHtml(s, it)).join('')}
       <div class="sec-ph"><b class="small">Photos for ${esc(s.title)}</b><div data-ph="sec:${s.id}" data-sec="${s.id}"></div>
         <div class="row">${ADD(s.id, '', '📷 Take photo', true)}${ADD(s.id, 'gal', 'Choose from phone')}</div></div>
-      <div class="row" style="padding:0 16px 14px"><button type="button" class="btn sm" data-fill="${s.id}|ok">Mark the rest OK</button><button type="button" class="btn sm" data-fill="${s.id}|na">Mark the rest N/A (not fitted)</button></div>
+      <div class="row" style="padding:0 16px 14px"><button type="button" class="btn sm" data-fill="${s.id}|ok">Mark the rest OK</button><button type="button" class="btn sm" data-fill="${s.id}|na">Mark the rest N/A (not fitted)</button><button type="button" class="btn sm" data-pick-part="${s.id}|">🔧 Parts for this area</button></div>
     </details>`).join('')}
 
     <div class="card"><h2>6. Issues and recommended actions</h2><p class="small muted" style="margin:0 0 8px">Filled in automatically from every Monitor, Action or Urgent line. Tap one to go to it.</p><div id="issues"></div></div>
@@ -331,7 +334,7 @@ async function showForm() {
     </div>
 
     <div class="card"><h2>7. Parts required</h2><p class="small muted" style="margin:0 0 10px">Sent to Parker Plant Parts and Aftersales for quotation, quoting the plant serial number and the issue refs.</p>
-      <div id="parts"></div><button type="button" class="btn sm" id="addPart">+ Add part</button></div>
+      <div id="parts"></div><div class="row"><button type="button" class="btn sm pri" data-pick-part="|">🔧 Pick from parts manual</button><button type="button" class="btn sm" id="addPart">+ Type a part in</button></div></div>
 
     <div class="card"><h2>8. Recommendations</h2>
       ${T('recBefore', 'Do before next production')}${T('recShutdown', 'Plan for next shutdown')}${T('recSpares', 'Spares to hold on site')}
@@ -349,7 +352,7 @@ async function showForm() {
     <div class="sticky"><div class="in"><span class="saved" id="saved">Draft saves on this phone as you go</span><button class="btn pri" id="submit" style="min-width:150px">${D.editOf ? 'Save changes' : 'Submit report'}</button></div></div>`;
 
   $$('[data-ph]').forEach(renderPh);
-  updateProgress(); renderIssues(); renderParts(); $$('[data-pad]').forEach(setupPad); gps(false);
+  updateProgress(); renderIssues(); renderParts(); $$('[data-pad]').forEach(setupPad); gps(false); setupManualSelect();
   $('#addPart').onclick = () => { D.parts.push({ id: uuid(), issue: '', desc: '', partNo: '', qty: '', needed: '', quote: false }); save(); renderParts(); $$('#parts [data-p$="|desc"]').pop()?.focus(); };
   $('#submit').onclick = submit;
   const firstOpen = CL.sections.find(s => Model.items(s).some(it => !it.opt && !D.checklist[it.ref]?.r));
@@ -364,7 +367,8 @@ function itemHtml(s, it) {
     <input type="text" class="note" data-n="action" placeholder="Recommended action" value="${esc(v.action || '')}" ${f ? '' : 'hidden'}>
     <div data-ph="item:${it.ref}" data-sec="${s.id}"></div>
     <div class="tools">${v.note || f || it.opt ? '' : '<button type="button" class="lnk" data-addnote>+ Comment</button>'}
-      <label class="lnk">📷 Photo of this item<input type="file" accept="image/*" capture="environment" data-add="${s.id}|${it.ref}"></label></div></div>`;
+      <label class="lnk">📷 Photo of this item<input type="file" accept="image/*" capture="environment" data-add="${s.id}|${it.ref}"></label>
+      <button type="button" class="lnk pickpart" data-pick-part="${s.id}|${it.ref}" ${f ? '' : 'hidden'}>🔧 Pick replacement part</button></div></div>`;
 }
 
 function onFormClick(e) {
@@ -376,6 +380,7 @@ function onFormClick(e) {
     const [note, act] = $$('.note', item), f = isFinding(r);
     note.placeholder = f ? 'What was seen *' : 'Comment';
     act.hidden = !f;
+    $('.pickpart', item).hidden = !f;
     if (f) { note.hidden = false; $('[data-addnote]', item)?.remove(); if (!note.value) note.focus(); }
     save(); updateProgress(); renderIssues(); return;
   }
@@ -404,6 +409,8 @@ function onFormClick(e) {
     const el = $(`.item[data-k="${go.dataset.goto}"]`); el.closest('details').open = true;
     el.scrollIntoView({ block: 'center' }); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 1500); return;
   }
+  const pp = e.target.closest('[data-pick-part]');
+  if (pp) { const [sec, issue] = pp.dataset.pickPart.split('|'); openPicker({ area: sec || null, issue: issue || '' }); return; }
   const rm = e.target.closest('[data-rmpart]');
   if (rm) { D.parts = D.parts.filter(p => p.id !== rm.dataset.rmpart); save(); renderParts(); return; }
   const clr = e.target.closest('[data-clr]');
@@ -411,7 +418,13 @@ function onFormClick(e) {
 }
 function onFormInput(e) {
   const t = e.target;
-  if (t.dataset.f) { D[t.dataset.f] = t.value; save(); return; }
+  if (t.dataset.f) {
+    D[t.dataset.f] = t.value; save();
+    if (!D.manualId && !D.manualPicked && ['serialNumber', 'projectNo', 'plantModel', 'customer'].includes(t.dataset.f))
+      idb.get('manuals').then(list => { const g = guessManual(list || []); const sel = $('#manualSel');
+        if (g && D && !D.manualId) { D.manualId = g.id; save(); if (sel) sel.value = g.id; getManual(g.id).catch(() => {}); toast(`Parts manual found: ${g.title}`); } }).catch(() => {});
+    return;
+  }
   if (t.dataset.n) {
     const k = t.closest('.item').dataset.k;
     D.checklist[k] = { ...(D.checklist[k] || {}), [t.dataset.n]: t.value }; save();
@@ -465,9 +478,155 @@ function renderParts() {
   el.innerHTML = D.parts.map((p, i) => `<div class="part"><div class="row" style="justify-content:space-between"><b class="small">Part ${i + 1}</b><button type="button" class="lnk warnTxt" data-rmpart="${p.id}">Remove</button></div>
     <label class="f">Issue ref<select data-p="${p.id}|issue">${issueOpts(p.issue)}</select></label>
     <label class="f">Part description<input type="text" data-p="${p.id}|desc" value="${esc(p.desc)}"></label>
+    ${p.drawing ? `<p class="small muted" style="margin:-6px 0 10px">From the parts manual: ${esc(p.drawing)}</p>` : ''}
     <div class="grid2"><label class="f">Part no.<input type="text" data-p="${p.id}|partNo" value="${esc(p.partNo)}"></label><label class="f">Qty<input type="text" inputmode="numeric" data-p="${p.id}|qty" value="${esc(p.qty)}"></label></div>
     <div class="f"><span class="lbl">Needed</span><div class="row">${[['now', 'Now'], ['shutdown', 'Next shutdown'], ['spare', 'Spare']].map(([v, l]) => `<label class="cb"><input type="radio" name="need-${p.id}" data-p="${p.id}|needed" value="${v}" ${p.needed === v ? 'checked' : ''}><span>${l}</span></label>`).join('')}</div></div>
     <label class="cb"><input type="checkbox" data-p="${p.id}|quote" ${p.quote ? 'checked' : ''}><span>Quote needed</span></label></div>`).join('') || '<p class="muted small" style="margin:0 0 10px">No parts added.</p>';
+}
+
+/* ---------- parts manuals: chooser on the report ---------- */
+const manualCache = {};
+async function getManual(id) {
+  if (manualCache[id]) return manualCache[id];
+  try { const { manual } = await api(`/api/manuals/${id}`); manualCache[id] = manual; idb.set(`manual-${id}`, manual).catch(() => {}); return manual; }
+  catch (e) { const c = await idb.get(`manual-${id}`).catch(() => null); if (c) return (manualCache[id] = c); throw e; }
+}
+async function manualList() {
+  try { const { manuals } = await api('/api/manuals'); idb.set('manuals', manuals).catch(() => {}); return manuals; }
+  catch { return (await idb.get('manuals').catch(() => null)) || []; }
+}
+const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function guessManual(list) {
+  const ready = list.filter(m => m.status === 'ready');
+  const serial = norm(D.serialNumber) + norm(D.projectNo);
+  return ready.find(m => m.machine_id && serial.includes(norm(m.machine_id)))
+    || ready.find(m => m.model && norm(D.plantModel) && norm(m.model).includes(norm(D.plantModel)) && m.customer && norm(m.customer) === norm(D.customer))
+    || null;
+}
+async function setupManualSelect() {
+  const sel = $('#manualSel'); if (!sel) return;
+  const list = await manualList();
+  if (D.manualId === undefined) { const g = guessManual(list); D.manualId = g ? g.id : null; save(); }
+  const ready = list.filter(m => m.status === 'ready');
+  sel.innerHTML = `<option value="">None</option>${ready.map(m => `<option value="${m.id}" ${m.id === D.manualId ? 'selected' : ''}>${esc(m.title)}${m.machine_id ? ` (${esc(m.machine_id)})` : ''}</option>`).join('')}`;
+  if (!ready.length) $('#manualNote').innerHTML = 'No parts manuals uploaded yet. Add one from the menu: <a href="#manuals">Parts manuals</a>.';
+  sel.onchange = () => { D.manualId = sel.value ? +sel.value : null; D.manualPicked = true; save(); if (D.manualId) getManual(D.manualId).catch(() => {}); };
+  if (D.manualId) getManual(D.manualId).catch(() => {});
+}
+
+/* ---------- parts picker: drawings and parts lists by checklist area ---------- */
+let PK = null;
+async function openPicker(ctx) {
+  if (D && !D.manualId && !ctx.browse) {
+    toast('Choose the plant’s parts manual first (in 1. Report details).', 5000);
+    const s = $('#manualSel'); if (s) { s.scrollIntoView({ block: 'center' }); s.focus(); } return;
+  }
+  const id = ctx.browse || D.manualId;
+  let m;
+  try { m = await getManual(id); } catch { toast('Couldn’t open the parts manual. It needs signal the first time.'); return; }
+  PK = { ...ctx, m, units: m.unit_list || [], q: '', all: !ctx.area };
+  const el = document.createElement('div'); el.id = 'picker'; el.setAttribute('role', 'dialog');
+  document.body.appendChild(el); document.body.style.overflow = 'hidden';
+  history.pushState({ picker: 1 }, '');
+  renderPicker();
+}
+function closePicker() { const el = $('#picker'); if (el) el.remove(); document.body.style.overflow = ''; PK = null; }
+addEventListener('popstate', () => { if (PK) closePicker(); });
+function renderPicker() {
+  const el = $('#picker'); if (!el || !PK) return;
+  const sec = PK.area && CL.sections.find(s => s.id === PK.area);
+  const iss = PK.issue && Model.issues(CL, D?.checklist || {}).find(i => i.ref === PK.issue);
+  const itemName = PK.issue && CL.sections.flatMap(s => Model.items(s)).find(i => i.ref === PK.issue)?.t;
+  const units = PK.all || !PK.area ? PK.units : PK.units.filter(u => u.areas.includes(PK.area));
+  el.innerHTML = `<div class="pk-top"><div class="pk-h"><div><b>${PK.browse ? esc(PK.m.title) : 'Pick replacement parts'}</b>
+      <div class="small">${PK.issue ? `For ${esc(PK.issue)} ${esc(itemName || '')}${iss ? ` (issue ${iss.n})` : ''}` : sec ? `${sec.id} ${esc(sec.title)}` : esc(PK.m.title)}</div></div>
+      <button class="x" id="pkClose" aria-label="Close">×</button></div>
+    <input type="search" id="pkQ" placeholder="Search part no. or description" value="${esc(PK.q)}" autocomplete="off">
+    ${PK.area ? `<div class="seg" style="grid-template-columns:1fr 1fr;margin-top:8px"><button data-scope="area" aria-pressed="${!PK.all}" data-r="ok">This area (${PK.units.filter(u => u.areas.includes(PK.area)).length})</button><button data-scope="all" aria-pressed="${PK.all}" data-r="ok">Whole manual (${PK.units.length})</button></div>` : ''}
+    </div><div class="pk-body" id="pkBody"></div>`;
+  $('#pkClose').onclick = () => history.back();
+  $$('[data-scope]', el).forEach(b => b.onclick = () => { PK.all = b.dataset.scope === 'all'; renderPicker(); });
+  const q = $('#pkQ'); q.oninput = () => { PK.q = q.value; renderPkBody(units); };
+  renderPkBody(units);
+}
+function partRow(u, r) {
+  const added = D && D.parts.some(p => p.partNo === r.partNo && p.drawing === `${u.un} ref ${r.ref || '-'}` && (p.issue || '') === (PK.issue || ''));
+  return `<tr class="${r.sub ? 'subp' : ''}"><td>${esc(r.ref)}</td><td><b>${esc(r.partNo)}</b><div>${esc(r.desc)}</div></td><td>${esc(r.qty)}</td>
+    ${PK.browse ? '' : `<td><button class="btn sm ${added ? '' : 'pri'}" data-addpart="${esc(u.un)}|${esc(r.partNo)}|${esc(r.ref)}" ${added ? 'disabled' : ''}>${added ? '✓' : 'Add'}</button></td>`}</tr>`;
+}
+function renderPkBody(units) {
+  const body = $('#pkBody'), q = PK.q.trim().toLowerCase();
+  if (q.length >= 2) {
+    const hits = [];
+    for (const u of PK.units) for (const r of u.rows) if ((r.partNo + ' ' + r.desc).toLowerCase().includes(q)) hits.push([u, r]);
+    body.innerHTML = hits.length ? `<p class="small muted">${hits.length > 200 ? 'First 200 of ' : ''}${hits.length} match${hits.length === 1 ? '' : 'es'} in the whole manual</p>
+      <table class="bom">${hits.slice(0, 200).map(([u, r]) => `<tr class="grp"><td colspan="4">${esc(u.title)} · ${esc(u.un)}</td></tr>${partRow(u, r)}`).join('')}</table>` : '<p class="muted">No parts match.</p>';
+  } else {
+    body.innerHTML = units.length ? units.map(u => `<details class="unit" data-un="${esc(u.un)}"><summary><b>${esc(u.title)}</b>
+        <span class="small muted">${u.sections.map(s => `${s.chapterNo}${s.letter} ${esc(s.sub || s.chapter)}`).join(' · ')} · ${esc(u.un)} · ${u.rows.length} parts${u.drawings.length ? ` · ${u.drawings.length} drawing${u.drawings.length > 1 ? 's' : ''}` : ''}</span></summary><div class="ubody"></div></details>`).join('')
+      : `<p class="muted">Nothing in this manual is filed under this area. Try <b>Whole manual</b> or search.</p>`;
+    $$('details.unit', body).forEach(d => d.addEventListener('toggle', () => {
+      if (!d.open || d.dataset.done) return; d.dataset.done = 1;
+      const u = PK.units.find(x => x.un === d.dataset.un);
+      $('.ubody', d).innerHTML = `${u.drawings.map(g => `<div class="drg"><img loading="lazy" src="/api/manuals/${PK.m.id}/drawings/${g.page}" alt="${esc(g.title)}"><div class="small muted">${esc(g.title)} · manual page ${g.manualPage} · tap to zoom</div></div>`).join('')}
+        <table class="bom"><tr><th>Ref</th><th>Part</th><th>Qty</th>${PK.browse ? '' : '<th></th>'}</tr>${u.rows.map(r => partRow(u, r)).join('')}</table>`;
+      $$('.drg img', d).forEach(im => im.onclick = () => im.parentElement.classList.toggle('zoom'));
+    }));
+  }
+  body.onclick = e => {
+    const b = e.target.closest('[data-addpart]'); if (!b || b.disabled) return;
+    const [un, partNo, ref] = b.dataset.addpart.split('|'), u = PK.units.find(x => x.un === un), r = u.rows.find(x => x.partNo === partNo && x.ref === ref);
+    D.parts.push({ id: uuid(), issue: PK.issue || '', desc: r.desc, partNo: r.partNo, qty: '1', needed: '', quote: true, drawing: `${u.un} ref ${r.ref || '-'}` });
+    save(); renderParts(); b.textContent = '✓'; b.disabled = true; b.classList.remove('pri');
+    toast(`Added ${r.partNo} ${r.desc} to 7. Parts required`, 2500);
+  };
+}
+
+/* ---------- parts manuals page ---------- */
+async function showManuals() {
+  view.innerHTML = `<h1 style="margin-bottom:6px">Parts manuals</h1><p class="small muted" style="margin:0 0 14px">Upload a Parker parts manual (PDF). The app reads its drawings and parts lists and files them under the checklist areas, so engineers can pick replacement parts during an inspection.</p>
+    <div class="card"><h2>Upload a manual</h2><form id="mf">
+      <label class="f">Parts manual PDF<input type="file" accept="application/pdf,.pdf" id="mfile" required></label>
+      <div class="grid2"><label class="f">Customer<input type="text" id="mcust" placeholder="e.g. Associated Asphalt"></label><label class="f">Site<input type="text" id="msite" placeholder="e.g. East Peckham"></label></div>
+      <button class="btn pri" id="mup">Upload</button> <span class="small muted" id="mmsg"></span><p class="err" id="merr"></p></form></div>
+    <div class="card"><h2>Manuals</h2><div id="ml"><p class="muted">Loading…</p></div></div>`;
+  $('#mf').onsubmit = e => {
+    e.preventDefault(); $('#merr').textContent = '';
+    const f = $('#mfile').files[0]; if (!f) return;
+    if (!navigator.onLine) { $('#merr').textContent = 'You need signal to upload a manual.'; return; }
+    const fd = new FormData(); fd.append('pdf', f); fd.append('customer', $('#mcust').value); fd.append('site', $('#msite').value);
+    const x = new XMLHttpRequest(); x.open('POST', '/api/manuals'); x.withCredentials = true;
+    x.upload.onprogress = ev => { if (ev.lengthComputable) $('#mmsg').textContent = `Uploading ${Math.round(ev.loaded / ev.total * 100)}%`; };
+    x.onload = () => { let j = {}; try { j = JSON.parse(x.responseText); } catch {}
+      $('#mup').disabled = false;
+      if (x.status >= 300) { $('#merr').textContent = j.error || `Upload failed (${x.status})`; $('#mmsg').textContent = ''; return; }
+      $('#mmsg').textContent = 'Uploaded. Reading the manual, this takes about a minute.'; $('#mf').reset(); loadManuals(); };
+    x.onerror = () => { $('#mup').disabled = false; $('#merr').textContent = 'Upload failed. Check your signal and try again.'; };
+    $('#mup').disabled = true; x.send(fd);
+  };
+  loadManuals();
+}
+async function loadManuals() {
+  const el = $('#ml'); if (!el) return;
+  const list = await manualList();
+  el.innerHTML = list.length ? `<ul class="list">${list.map(m => `<li class="rep"><div class="t"><b>${esc(m.title)}</b>
+      <small>${[m.machine_id, m.model, m.customer, m.site].filter(Boolean).map(esc).join(' · ')}</small>
+      <small>${m.status === 'ready' ? `${m.units} units · ${m.parts} parts · ${m.drawings} drawings` : m.status === 'failed' ? `<span class="warnTxt">Couldn’t read it: ${esc(m.error)}</span>` : `⏳ ${esc(m.progress || 'Reading…')}`} · uploaded ${fmtDT(m.created_at)}${m.uploaded_by_name ? ' by ' + esc(m.uploaded_by_name) : ''}</small>
+      <div class="row acts">${m.status === 'ready' ? `<button class="btn sm" data-browse="${m.id}">Browse</button><button class="btn sm" data-offline="${m.id}">Save drawings for offline</button>` : ''}<a class="btn sm" href="/api/manuals/${m.id}/pdf" target="_blank" rel="noopener">PDF</a>${me.role === 'admin' || m.uploaded_by === me.id ? `<button class="btn sm warn" data-mdel="${m.id}">Delete</button>` : ''}</div></div></li>`).join('')}</ul>`
+    : '<p class="muted" style="margin:0">No manuals yet.</p>';
+  $$('[data-browse]', el).forEach(b => b.onclick = () => openPicker({ browse: +b.dataset.browse }));
+  $$('[data-offline]', el).forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const m = await getManual(+b.dataset.offline); const pages = m.unit_list.flatMap(u => u.drawings.map(d => d.page));
+      let n = 0; for (const p of [...new Set(pages)]) { await fetch(`/api/manuals/${m.id}/drawings/${p}`, { credentials: 'same-origin' }); b.textContent = `Saving ${++n}/${new Set(pages).size}`; }
+      b.textContent = '✓ Saved for offline';
+    } catch { b.disabled = false; b.textContent = 'Save drawings for offline'; toast('Couldn’t save everything. Try again with better signal.'); }
+  });
+  $$('[data-mdel]', el).forEach(b => b.onclick = async () => {
+    if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = 'Tap again to delete'; return; }
+    try { await api(`/api/manuals/${b.dataset.mdel}`, { method: 'DELETE' }); toast('Manual deleted'); loadManuals(); } catch (e) { toast(e.message); }
+  });
+  if (list.some(m => m.status === 'processing')) setTimeout(() => { if (location.hash === '#manuals') loadManuals(); }, 3000);
 }
 
 /* GPS */

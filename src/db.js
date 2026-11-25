@@ -47,6 +47,31 @@ async function migrate() {
     CREATE INDEX IF NOT EXISTS photos_report_idx ON photos (report_id, idx);
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS sec TEXT;
     ALTER TABLE photos ADD COLUMN IF NOT EXISTS item TEXT;
+    CREATE TABLE IF NOT EXISTS manuals (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      filename TEXT,
+      machine_id TEXT,
+      model TEXT,
+      customer TEXT,
+      site TEXT,
+      status TEXT NOT NULL DEFAULT 'processing',
+      progress TEXT,
+      error TEXT,
+      units JSONB,
+      pdf BYTEA,
+      uploaded_by INT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS manual_drawings (
+      manual_id INT NOT NULL REFERENCES manuals(id) ON DELETE CASCADE,
+      page INT NOT NULL,
+      title TEXT,
+      image BYTEA NOT NULL,
+      PRIMARY KEY (manual_id, page)
+    );
+    -- a manual left half-read by a restart is marked failed so it can be uploaded again
+    UPDATE manuals SET status='failed', error='The server restarted while reading this manual. Please upload it again.' WHERE status='processing';
   `);
 
   // One-off account setup from SET_USERS: JSON array of {email, password, name?, role?, mustChange?}.

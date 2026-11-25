@@ -1,0 +1,7 @@
+Liberation Sans (Regular, Bold) — SIL Open Font License 1.1
+https://github.com/liberationfonts/liberation-fonts
+
+Bundled here (rather than relying on the deployment container having any
+system fonts installed) so lib/pdfExtract.js can explicitly register a known
+font with @napi-rs/canvas before rendering PDF page screenshots. See the
+registerFonts() call in lib/pdfExtract.js for why.

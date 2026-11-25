@@ -1,17 +1,22 @@
 // App shell cache so the form opens with no signal. Reports themselves are queued in IndexedDB by app.js.
-const CACHE = 'ppi-shell-v3';
+const CACHE = 'ppi-shell-v4';
+const MANUALS = 'ppi-manuals'; // drawings and manual contents, kept for use with no signal
 const SHELL = ['/', '/index.html', '/app.js', '/model.js', '/styles.css', '/checklist.json', '/manifest.webmanifest', '/img/logo.png', '/img/icon-192.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });
 self.addEventListener('activate', e => {
-  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE && k !== MANUALS).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
+  if (url.origin === location.origin && /^\/api\/manuals\/\d+\/drawings\//.test(url.pathname)) { // drawings never change: cache first
+    e.respondWith(caches.open(MANUALS).then(c => c.match(req).then(hit => hit || fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; }))));
+    return;
+  }
   if (url.origin === location.origin && url.pathname.startsWith('/api/')) return; // always live
   if (url.origin === location.origin) {
     // Network first so updates arrive; fall back to the cache with no signal.

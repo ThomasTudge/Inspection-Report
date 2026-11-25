@@ -236,7 +236,7 @@ function buildPdf(report, photos) {
     const parts = d.parts || [];
     if (parts.length) table([{ w: 40, label: 'Issue Ref', align: 'center' }, { w: 136, label: 'Part Description' }, { w: 70, label: 'Part No.' }, { w: 32, label: 'Qty', align: 'center' }, { w: 179, label: 'Needed' }, { w: W - 457, label: 'Quote Needed' }],
       parts.map(p => { const iss = issues.find(i => i.ref === p.issue);
-        return [{ text: iss ? String(iss.n) : (p.issue || ''), align: 'center' }, p.desc, p.partNo, p.qty, { h: 12, draw: (x, y, w) => checks([['Now', p.needed === 'now'], ['Next shutdown', p.needed === 'shutdown'], ['Spare', p.needed === 'spare']], x, y, w) },
+        return [{ text: iss ? String(iss.n) : (p.issue || ''), align: 'center' }, p.drawing ? { text: `${p.desc}\n${p.drawing}`, size: 9 } : p.desc, p.partNo, p.qty, { h: 12, draw: (x, y, w) => checks([['Now', p.needed === 'now'], ['Next shutdown', p.needed === 'shutdown'], ['Spare', p.needed === 'spare']], x, y, w) },
           { h: 9, draw: (x, y, w, h) => tick(x + (w - 9) / 2, y + (h - 9) / 2 - 1, p.quote) }]; }));
     else font('Helvetica-Oblique', 9.5, MUTED).text('No parts listed.', L, doc.y + 4);
 

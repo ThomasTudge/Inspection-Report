@@ -8,6 +8,7 @@ const { pool, migrate } = require('./db');
 const { buildPdf } = require('./pdf');
 const { sendReportEmail, mailConfigured } = require('./mail');
 const { runImports } = require('./import-once');
+const { parseManual } = require('./manual');
 
 const PORT = process.env.PORT || 3000;
 const PROD = process.env.NODE_ENV === 'production';
@@ -67,11 +68,12 @@ function sanitizeReport(d) {
   data.overall = oneOf(d.overall, ['ok', 'monitor', 'action', 'urgent']);
   data.safe = oneOf(d.safe, ['yes', 'conditions', 'no']);
   data.engineerSignature = sig(d.engineerSignature);
+  data.manualId = Number.isInteger(d.manualId) ? d.manualId : null;
   for (const [k, v] of Object.entries(d.checklist || {}))
     if (/^5\.\d{1,2}\.\d{1,2}$/.test(k) && v && ['ok', 'monitor', 'action', 'urgent', 'na'].includes(v.r))
       data.checklist[k] = { r: v.r, note: clean(v.note, 1500), action: clean(v.action, 1500) };
   data.parts = (Array.isArray(d.parts) ? d.parts : []).slice(0, 60).map(p => ({
-    issue: clean(p.issue, 20), desc: clean(p.desc, 300), partNo: clean(p.partNo, 100), qty: clean(p.qty, 20),
+    issue: clean(p.issue, 20), desc: clean(p.desc, 300), partNo: clean(p.partNo, 100), qty: clean(p.qty, 20), drawing: clean(p.drawing, 80),
     needed: oneOf(p.needed, ['now', 'shutdown', 'spare']), quote: p.quote === true,
   })).filter(p => p.desc || p.partNo);
   return data;
@@ -318,6 +320,72 @@ app.post('/api/reports/:id/resend', needAuth, wrap(async (req, res) => {
   res.json({ email: await emailReport(r) });
 }));
 
+/* ---------- parts manuals ---------- */
+const manualUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
+const manualSummary = `m.id, m.title, m.filename, m.machine_id, m.model, m.customer, m.site, m.status, m.progress, m.error, m.created_at, u.name AS uploaded_by_name, m.uploaded_by,
+  coalesce(jsonb_array_length(m.units), 0) AS units, (SELECT count(*) FROM manual_drawings d WHERE d.manual_id = m.id)::int AS drawings,
+  coalesce((SELECT sum(jsonb_array_length(x->'rows')) FROM jsonb_array_elements(coalesce(m.units, '[]')) x), 0)::int AS parts`;
+
+app.get('/api/manuals', needAuth, wrap(async (req, res) => {
+  const { rows } = await pool.query(`SELECT ${manualSummary} FROM manuals m LEFT JOIN users u ON u.id = m.uploaded_by ORDER BY m.created_at DESC`);
+  res.json({ manuals: rows });
+}));
+app.post('/api/manuals', needAuth, manualUpload.single('pdf'), wrap(async (req, res) => {
+  const f = req.file;
+  if (!f || !/pdf/i.test(f.mimetype) || f.buffer.subarray(0, 4).toString() !== '%PDF') return res.status(400).json({ error: 'Choose a PDF parts manual.' });
+  const title = clean(req.body.title, 200) || f.originalname.replace(/\.pdf$/i, '');
+  const { rows } = await pool.query(`INSERT INTO manuals(title, filename, customer, site, pdf, uploaded_by, progress) VALUES($1,$2,$3,$4,$5,$6,'Queued') RETURNING id`,
+    [title, clean(f.originalname, 200), clean(req.body.customer, 200), clean(req.body.site, 200), f.buffer, req.session.user.id]);
+  const id = rows[0].id;
+  res.json({ id });
+  readManual(id, f.buffer); // in the background; the list shows progress
+}));
+let manualQueue = Promise.resolve();
+function readManual(id, buffer) {
+  manualQueue = manualQueue.then(async () => {
+    const progress = msg => pool.query('UPDATE manuals SET progress=$2 WHERE id=$1', [id, msg]).catch(() => {});
+    try {
+      const m = await parseManual(buffer, { password: process.env.MANUAL_PDF_PASSWORD, onProgress: progress });
+      if (!m.units.length) throw new Error('No parts lists found. Is this a Parker parts manual?');
+      for (const d of m.drawings) await pool.query('INSERT INTO manual_drawings(manual_id, page, title, image) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [id, d.page, d.title, d.image]);
+      await pool.query(`UPDATE manuals SET units=$2, machine_id=$3, model=$4, status='ready', progress=NULL, error=NULL WHERE id=$1`, [id, JSON.stringify(m.units), m.machineId, m.model]);
+      console.log(`Manual ${id}: ${m.units.length} units, ${m.units.reduce((a, u) => a + u.rows.length, 0)} parts, ${m.drawings.length} drawings`);
+    } catch (e) {
+      console.error(`Manual ${id} failed:`, e.message);
+      await pool.query(`UPDATE manuals SET status='failed', error=$2, progress=NULL WHERE id=$1`, [id, e.message.slice(0, 300)]).catch(() => {});
+    }
+  });
+}
+app.get('/api/manuals/:id', needAuth, wrap(async (req, res) => {
+  const { rows } = await pool.query(`SELECT ${manualSummary}, m.units AS unit_list FROM manuals m LEFT JOIN users u ON u.id = m.uploaded_by WHERE m.id=$1`, [+req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Manual not found' });
+  res.json({ manual: rows[0] });
+}));
+app.get('/api/manuals/:id/drawings/:page', needAuth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT image FROM manual_drawings WHERE manual_id=$1 AND page=$2', [+req.params.id, +req.params.page]);
+  if (!rows[0]) return res.status(404).send('Not found');
+  res.set({ 'Content-Type': 'image/png', 'Cache-Control': 'private, max-age=31536000, immutable' }).send(rows[0].image);
+}));
+app.get('/api/manuals/:id/pdf', needAuth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT title, pdf FROM manuals WHERE id=$1', [+req.params.id]);
+  if (!rows[0]) return res.status(404).send('Not found');
+  res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${rows[0].title.replace(/[^\w .-]/g, '')}.pdf"`, 'Cache-Control': 'private, no-store' }).send(rows[0].pdf);
+}));
+app.patch('/api/manuals/:id', needAuth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT uploaded_by FROM manuals WHERE id=$1', [+req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+  if (req.session.user.role !== 'admin' && rows[0].uploaded_by !== req.session.user.id) return res.status(403).json({ error: 'Only an admin or the person who uploaded it can change this.' });
+  for (const k of ['title', 'customer', 'site', 'machine_id', 'model']) if (typeof req.body[k] === 'string') await pool.query(`UPDATE manuals SET ${k}=$2 WHERE id=$1`, [+req.params.id, clean(req.body[k], 200)]);
+  res.json({ ok: true });
+}));
+app.delete('/api/manuals/:id', needAuth, wrap(async (req, res) => {
+  const { rows } = await pool.query('SELECT uploaded_by FROM manuals WHERE id=$1', [+req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Not found' });
+  if (req.session.user.role !== 'admin' && rows[0].uploaded_by !== req.session.user.id) return res.status(403).json({ error: 'Only an admin or the person who uploaded it can delete this.' });
+  await pool.query('DELETE FROM manuals WHERE id=$1', [+req.params.id]);
+  res.json({ ok: true });
+}));
+
 app.get('/healthz', (req, res) => res.send('ok'));
 
 /* ---------- static app ---------- */
@@ -328,7 +396,7 @@ app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(__dirname, '..', 
 
 app.use((err, req, res, next) => {
   console.error(err);
-  if (err instanceof multer.MulterError) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'A photo is too large.' : 'Upload problem: ' + err.message });
+  if (err instanceof multer.MulterError) return res.status(400).json({ error: err.code === 'LIMIT_FILE_SIZE' ? 'That file is too large.' : 'Upload problem: ' + err.message });
   res.status(500).json({ error: 'Something went wrong on the server.' });
 });
 
