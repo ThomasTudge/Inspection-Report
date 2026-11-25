@@ -151,3 +151,6 @@ table.bom td div{font-size:13px;color:var(--ink)}
 table.bom tr.subp td:nth-child(2){padding-left:16px}
 table.bom tr.grp td{background:#eef3f7;font-size:12px;font-weight:700;color:var(--deep)}
 .pk-top .seg button[aria-pressed=true]{background:#fff;color:var(--blue);border-color:#fff}
+.manbox{border:1px dashed #9fb0bd;border-radius:12px;padding:12px 14px;margin-bottom:16px;background:#f8fafc}
+.bar{height:8px;background:#e1e8ee;border-radius:99px;overflow:hidden}.bar i{display:block;height:100%;width:0;background:var(--blue);transition:width .2s}
+input.fromman{background:#eef7f1;border-color:#9fd1b4}

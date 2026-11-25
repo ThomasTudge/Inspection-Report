@@ -85,7 +85,19 @@ async function parseManual(buffer, { password, width = 1800, onProgress = () => 
     const pages = (await parser.getText({ first: 1, last: total })).pages.map(p => ({ num: p.num, text: p.text || '' }));
     const toc = parseToc(pages);
     const all = pages.map(p => p.text).join('\n');
-    const model = (all.match(/Model No:\s*([^\n.]+?)\s*\.{2,}/) || [])[1] || '';
+    const front = pages.slice(0, 4).map(p => p.text).join('\n');
+    const field = re => ((front.match(re) || [])[1] || '').trim();
+    const model = field(/Model No:\s*([^\n.]+?)\s*\.{2,}/);
+    const idNo = field(/ID No:\s*([^\n.]+?)\s*\.{2,}/);
+    const year = field(/Year of Construction:\s*(\d{4})/);
+    // Cover: "...RoadStar 1500 Mobile / Asphalt Plant / ... / P10891 / Associated / Asphalt / Parts Manual"
+    const cover = pages[0].text.split('\n').map(l => l.split('\t')[0].trim()).filter(Boolean);
+    const idAt = cover.findIndex(l => idNo && l === idNo);
+    const custLines = idAt >= 0 ? cover.slice(idAt + 1).filter(l => !/manual|instruction/i.test(l)).slice(0, 3) : [];
+    const customer = custLines.join(' ').replace(/\s+/g, ' ').trim();
+    const coverText = cover.join(' ');
+    const mobile = /\bmobile\b/i.test(coverText), batch = /paddle mixer|weigh hopper|batch/i.test(all.slice(0, 20000)) || toc.some(t => /paddle mixer|weigh hopper|batch/i.test(t.sub));
+    const plantType = batch ? (mobile ? 'Mobile batch plant' : 'Batch plant') : /drum|continuous/i.test(coverText) ? 'Continuous / drum mix plant' : (mobile ? 'Mobile asphalt plant' : '');
     const units = new Map(); const drawings = [];
     const unit = (un, title) => { if (!units.has(un)) units.set(un, { un, title: title || un, drawings: [], rows: [], pages: [], sections: [] }); return units.get(un); };
     let machineId = '';
@@ -136,7 +148,7 @@ async function parseManual(buffer, { password, width = 1800, onProgress = () => 
       } catch (e) { console.warn(`Manual: drawing on page ${d.page} failed: ${e.message}`); }
       if (i % 10 === 9) onProgress(`Rendered ${i + 1} of ${drawingsKept.length} drawings`);
     }
-    return { machineId, model, toc, units: [...units.values()].sort((a, b) => a.firstPage - b.firstPage), drawings: drawingsKept.filter(d => d.image).map(({ sec, secKey, ...d }) => d) };
+    return { machineId: idNo || machineId, model, year, customer, plantType, toc, units: [...units.values()].sort((a, b) => a.firstPage - b.firstPage), drawings: drawingsKept.filter(d => d.image).map(({ sec, secKey, ...d }) => d) };
   } finally { await parser.destroy(); }
 }
 

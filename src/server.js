@@ -322,7 +322,7 @@ app.post('/api/reports/:id/resend', needAuth, wrap(async (req, res) => {
 
 /* ---------- parts manuals ---------- */
 const manualUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 80 * 1024 * 1024, files: 1 } });
-const manualSummary = `m.id, m.title, m.filename, m.machine_id, m.model, m.customer, m.site, m.status, m.progress, m.error, m.created_at, u.name AS uploaded_by_name, m.uploaded_by,
+const manualSummary = `m.id, m.title, m.filename, m.machine_id, m.model, m.customer, m.site, m.year, m.plant_type, m.status, m.progress, m.error, m.created_at, u.name AS uploaded_by_name, m.uploaded_by,
   coalesce(jsonb_array_length(m.units), 0) AS units, (SELECT count(*) FROM manual_drawings d WHERE d.manual_id = m.id)::int AS drawings,
   coalesce((SELECT sum(jsonb_array_length(x->'rows')) FROM jsonb_array_elements(coalesce(m.units, '[]')) x), 0)::int AS parts`;
 
@@ -333,9 +333,13 @@ app.get('/api/manuals', needAuth, wrap(async (req, res) => {
 app.post('/api/manuals', needAuth, manualUpload.single('pdf'), wrap(async (req, res) => {
   const f = req.file;
   if (!f || !/pdf/i.test(f.mimetype) || f.buffer.subarray(0, 4).toString() !== '%PDF') return res.status(400).json({ error: 'Choose a PDF parts manual.' });
-  const title = clean(req.body.title, 200) || f.originalname.replace(/\.pdf$/i, '');
-  const { rows } = await pool.query(`INSERT INTO manuals(title, filename, customer, site, pdf, uploaded_by, progress) VALUES($1,$2,$3,$4,$5,$6,'Queued') RETURNING id`,
-    [title, clean(f.originalname, 200), clean(req.body.customer, 200), clean(req.body.site, 200), f.buffer, req.session.user.id]);
+  const title = clean(req.body.title, 200) || f.originalname.replace(/\.pdf$/i, '').replace(/[_]+/g, ' ');
+  const sha = require('crypto').createHash('sha256').update(f.buffer).digest('hex');
+  // Same file already read (e.g. another engineer on the same plant): reuse it straight away.
+  const same = await pool.query(`SELECT id FROM manuals WHERE sha256=$1 AND status IN ('ready','processing') ORDER BY id DESC LIMIT 1`, [sha]);
+  if (same.rows[0]) return res.json({ id: same.rows[0].id, reused: true });
+  const { rows } = await pool.query(`INSERT INTO manuals(title, filename, customer, site, pdf, uploaded_by, progress, sha256) VALUES($1,$2,$3,$4,$5,$6,'Queued',$7) RETURNING id`,
+    [title, clean(f.originalname, 200), clean(req.body.customer, 200), clean(req.body.site, 200), f.buffer, req.session.user.id, sha]);
   const id = rows[0].id;
   res.json({ id });
   readManual(id, f.buffer); // in the background; the list shows progress
@@ -348,7 +352,8 @@ function readManual(id, buffer) {
       const m = await parseManual(buffer, { password: process.env.MANUAL_PDF_PASSWORD, onProgress: progress });
       if (!m.units.length) throw new Error('No parts lists found. Is this a Parker parts manual?');
       for (const d of m.drawings) await pool.query('INSERT INTO manual_drawings(manual_id, page, title, image) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [id, d.page, d.title, d.image]);
-      await pool.query(`UPDATE manuals SET units=$2, machine_id=$3, model=$4, status='ready', progress=NULL, error=NULL WHERE id=$1`, [id, JSON.stringify(m.units), m.machineId, m.model]);
+      await pool.query(`UPDATE manuals SET units=$2, machine_id=$3, model=$4, year=$5, plant_type=$6, customer=coalesce(nullif(customer,''), $7), status='ready', progress=NULL, error=NULL WHERE id=$1`,
+        [id, JSON.stringify(m.units), m.machineId, m.model, m.year, m.plantType, m.customer]);
       console.log(`Manual ${id}: ${m.units.length} units, ${m.units.reduce((a, u) => a + u.rows.length, 0)} parts, ${m.drawings.length} drawings`);
     } catch (e) {
       console.error(`Manual ${id} failed:`, e.message);

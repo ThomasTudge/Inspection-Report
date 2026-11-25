@@ -70,6 +70,9 @@ async function migrate() {
       image BYTEA NOT NULL,
       PRIMARY KEY (manual_id, page)
     );
+    ALTER TABLE manuals ADD COLUMN IF NOT EXISTS year TEXT;
+    ALTER TABLE manuals ADD COLUMN IF NOT EXISTS plant_type TEXT;
+    ALTER TABLE manuals ADD COLUMN IF NOT EXISTS sha256 TEXT;
     -- a manual left half-read by a restart is marked failed so it can be uploaded again
     UPDATE manuals SET status='failed', error='The server restarted while reading this manual. Please upload it again.' WHERE status='processing';
   `);
