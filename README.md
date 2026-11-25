@@ -23,7 +23,7 @@ Needs a Postgres database. Environment variables:
 | `RESEND_API_KEY` | Turns on emailing through Resend. Without it (or the SMTP settings) reports are saved but not emailed. |
 | `MAIL_FROM` (or `RESEND_FROM`) | Sender, e.g. `Parker Plant Inspections <inspections@parkerplant.com>` (domain must be verified in Resend). Defaults to Resend's test sender. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | Alternative to Resend: send through a mailbox, e.g. Microsoft 365 (`smtp.office365.com`, port 587). |
-| `MANUAL_PDF_PASSWORD` | Optional: password for opening protected parts manual PDFs. |
+| `MANUAL_PDF_PASSWORD` | Optional: the usual password for protected parts manuals, tried automatically. Otherwise the engineer is asked for it once and their phone remembers it. |
 | `OFFICE_EMAIL` | Comma-separated addresses copied on every report |
 | `REPLY_TO` | Optional reply-to address |
 

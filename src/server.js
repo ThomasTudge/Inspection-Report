@@ -8,7 +8,7 @@ const { pool, migrate } = require('./db');
 const { buildPdf } = require('./pdf');
 const { sendReportEmail, mailConfigured } = require('./mail');
 const { runImports } = require('./import-once');
-const { parseManual } = require('./manual');
+const { parseManual, findPassword } = require('./manual');
 
 const PORT = process.env.PORT || 3000;
 const PROD = process.env.NODE_ENV === 'production';
@@ -338,18 +338,24 @@ app.post('/api/manuals', needAuth, manualUpload.single('pdf'), wrap(async (req, 
   // Same file already read (e.g. another engineer on the same plant): reuse it straight away.
   const same = await pool.query(`SELECT id FROM manuals WHERE sha256=$1 AND status IN ('ready','processing') ORDER BY id DESC LIMIT 1`, [sha]);
   if (same.rows[0]) return res.json({ id: same.rows[0].id, reused: true });
+  // Password-protected manuals: try the one typed in, then the company one (MANUAL_PDF_PASSWORD).
+  const typed = typeof req.body.password === 'string' ? req.body.password.slice(0, 100) : '';
+  const open = await findPassword(f.buffer, [typed, process.env.MANUAL_PDF_PASSWORD]);
+  if (!open.ok && open.reason === 'password') return res.status(400).json({ needPassword: true, wrong: !!typed,
+    error: typed ? 'That password didn’t open the manual. Check it and try again.' : 'This manual is password protected. Enter its password.' });
+  if (!open.ok) return res.status(400).json({ error: 'That PDF couldn’t be opened. Is it a complete parts manual?' });
   const { rows } = await pool.query(`INSERT INTO manuals(title, filename, customer, site, pdf, uploaded_by, progress, sha256) VALUES($1,$2,$3,$4,$5,$6,'Queued',$7) RETURNING id`,
     [title, clean(f.originalname, 200), clean(req.body.customer, 200), clean(req.body.site, 200), f.buffer, req.session.user.id, sha]);
   const id = rows[0].id;
-  res.json({ id });
-  readManual(id, f.buffer); // in the background; the list shows progress
+  res.json({ id, passwordUsed: !!typed && open.password === typed });
+  readManual(id, f.buffer, open.password); // in the background; the report shows progress
 }));
 let manualQueue = Promise.resolve();
-function readManual(id, buffer) {
+function readManual(id, buffer, password) {
   manualQueue = manualQueue.then(async () => {
     const progress = msg => pool.query('UPDATE manuals SET progress=$2 WHERE id=$1', [id, msg]).catch(() => {});
     try {
-      const m = await parseManual(buffer, { password: process.env.MANUAL_PDF_PASSWORD, onProgress: progress });
+      const m = await parseManual(buffer, { password, onProgress: progress });
       if (!m.units.length) throw new Error('No parts lists found. Is this a Parker parts manual?');
       for (const d of m.drawings) await pool.query('INSERT INTO manual_drawings(manual_id, page, title, image) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING', [id, d.page, d.title, d.image]);
       await pool.query(`UPDATE manuals SET units=$2, machine_id=$3, model=$4, year=$5, plant_type=$6, customer=coalesce(nullif(customer,''), $7), status='ready', progress=NULL, error=NULL WHERE id=$1`,

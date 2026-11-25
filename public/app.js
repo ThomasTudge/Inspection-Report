@@ -534,23 +534,34 @@ function fillFromManual(m) {
   D.manualFilled = true; save();
   if (filled.length) toast(`Filled in from the manual: ${filled.join(', ')}`, 5000);
 }
-function uploadManual(f) {
+async function uploadManual(f, password) {
   if (!f) return;
+  if (password === undefined) password = (await idb.get('manualPw').catch(() => null)) || '';
   const el = $('#manbox');
   if (!navigator.onLine) { toast('You need signal to upload the manual. You can fill in the details by hand and add it later.', 6000); renderManualBox(); return; }
   if (!/\.pdf$/i.test(f.name) && f.type !== 'application/pdf') { toast('Choose the PDF parts manual.'); renderManualBox(); return; }
-  const fd = new FormData(); fd.append('pdf', f); fd.append('site', D.siteName || '');
+  const fd = new FormData(); fd.append('pdf', f); fd.append('site', D.siteName || ''); if (password) fd.append('password', password);
   const x = new XMLHttpRequest(); x.open('POST', '/api/manuals'); x.withCredentials = true;
   renderManualBox(`<b>Parts manual</b><p class="small" style="margin:4px 0 6px">Uploading ${esc(f.name)}…</p><div class="bar"><i id="manbar"></i></div>`);
   x.upload.onprogress = ev => { const b = $('#manbar'); if (b && ev.lengthComputable) b.style.width = Math.round(ev.loaded / ev.total * 100) + '%'; };
   x.onload = () => {
     let j = {}; try { j = JSON.parse(x.responseText); } catch {}
+    if (j.needPassword) { askManualPassword(f, j.wrong ? j.error : ''); return; }
     if (x.status >= 300 || !j.id) { toast(j.error || `Upload failed (${x.status}).`, 6000); renderManualBox(); return; }
     if (!D) return;
+    if (j.passwordUsed) idb.set('manualPw', password).catch(() => {}); // remembered on this phone for next time
     D.manualId = j.id; D.manualFilled = false; save(); renderManualBox();
   };
   x.onerror = () => { toast('Upload failed. Check your signal and try again.'); renderManualBox(); };
   x.send(fd);
+}
+function askManualPassword(f, msg) {
+  renderManualBox(`<b>Parts manual</b><p class="small" style="margin:4px 0 8px">🔒 ${esc(f.name)} is password protected.</p>
+    <form id="manpw" class="row" style="align-items:flex-end"><label class="f" style="flex:1;margin:0">Manual password<input type="text" id="manpwi" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+    <button class="btn pri">Open</button><button type="button" class="btn" id="manpwx">Cancel</button></form>${msg ? `<p class="err">${esc(msg)}</p>` : ''}`);
+  $('#manpwi').focus();
+  $('#manpw').onsubmit = e => { e.preventDefault(); uploadManual(f, $('#manpwi').value.trim()); };
+  $('#manpwx').onclick = () => renderManualBox();
 }
 async function saveDrawingsOffline(m, b) {
   b.disabled = true;

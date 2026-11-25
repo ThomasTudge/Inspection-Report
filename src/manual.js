@@ -152,4 +152,15 @@ async function parseManual(buffer, { password, width = 1800, onProgress = () => 
   } finally { await parser.destroy(); }
 }
 
-module.exports = { parseManual, areasFor };
+// Which password opens the PDF: returns { ok: true, password } or { ok: false, reason: 'password' | 'unreadable' }
+async function findPassword(buffer, candidates) {
+  for (const pw of [...new Set(candidates.filter(Boolean)), undefined]) {
+    const p = new PDFParse(pw ? { data: buffer, password: pw } : { data: buffer });
+    try { await p.getInfo(); return { ok: true, password: pw }; }
+    catch (e) { if (e.name !== 'PasswordException') return { ok: false, reason: 'unreadable' }; }
+    finally { await p.destroy().catch(() => {}); }
+  }
+  return { ok: false, reason: 'password' };
+}
+
+module.exports = { parseManual, areasFor, findPassword };
